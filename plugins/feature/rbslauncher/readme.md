@@ -8,10 +8,15 @@ adds the decoder channel, starts the device and shows the spectrum, the waterfal
 
 <h2>Layouts</h2>
 
-- **Tout-en-un**: all the panels (controls, spectrum and waterfall, decodes, info) in one window.
-- **Fenêtres**: each panel in its own window, to place on one or two screens or to keep only the part you need.
+- **Tout-en-un**: as SDR++, a fixed width menu on the left (controls and info), the spectrum and waterfall taking
+  all the rest of the window, and the decodes under them at a fixed height.
+- **Onglets**: as the SDRangel workspaces, one tab per panel (spectrum and waterfall, decodes, controls, info),
+  each one using the whole window.
 
-The window remembers the layout used last and the arrangement of each layout. The "Panneaux" menu shows or hides each panel.
+The window remembers the layout used last and its size. It opens full screen the first time.
+
+While RBS is open the SDRangel window is hidden: "Réglages avancés dans SDRangel" shows it again.
+Closing RBS closes SDRangel, which saves its configuration.
 
 <h2>Modes</h2>
 

@@ -27,7 +27,6 @@
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
-#include <QDockWidget>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -40,15 +39,15 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLocale>
-#include <QMenu>
 #include <QProgressBar>
-#include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTableView>
 #include <QToolBar>
 #include <QToolButton>
@@ -60,28 +59,34 @@
 #include "device/deviceset.h"
 #include "device/deviceuiset.h"
 #include "gui/glspectrum.h"
-#include "gui/valuedial.h"
 #include "util/maidenhead.h"
 #include "maincore.h"
 #include "mainwindow.h"
 
 #include "mcpdatafeed.h"
+#include "rbsfrequencydial.h"
 #include "rbssection.h"
 #include "rbsspectrumtee.h"
 #include "rbswindow.h"
 
 static const char* const m_settingsGroup = "RBSLauncher";
+static constexpr int m_sidebarWidth = 300;      //!< Fixed, as the SDR++ menu
+static constexpr int m_decodesHeight = 240;     //!< Fixed in the all in one layout
 
 static const char* const m_styleSheet = R"(
-RBSWindow, QMainWindow::separator { background: #0b0d10; }
-QMainWindow::separator { width: 3px; height: 3px; }
+RBSWindow { background: #0b0d10; }
 QToolBar#rbsTopBarToolbar { background: #111418; border: none; border-bottom: 1px solid #252a31; padding: 0; spacing: 0; }
 QWidget#rbsTopBar { background: #111418; }
-QDockWidget { color: #dfe4ea; }
-QDockWidget::title { background: #181c22; padding: 4px 8px; border-bottom: 1px solid #252a31; text-align: left; }
 QToolButton#rbsSectionHeader { background: #181c22; border: none; border-bottom: 1px solid #252a31; padding: 5px 6px; color: #dfe4ea; text-align: left; }
 QWidget#rbsSectionBody { background: #111418; border-bottom: 1px solid #252a31; }
 QWidget#rbsPanel, QScrollArea, QScrollArea > QWidget > QWidget { background: #111418; border: none; }
+QWidget#rbsSidebar { background: #111418; border-right: 1px solid #252a31; }
+QWidget#rbsPanelHeader { background: #181c22; border-top: 1px solid #252a31; border-bottom: 1px solid #252a31; }
+QTabWidget::pane { border: none; background: #0b0d10; }
+QTabBar { background: #111418; }
+QTabBar::tab { background: #111418; color: #7f8a98; padding: 7px 28px; border: none; border-right: 1px solid #252a31; border-bottom: 1px solid #252a31; min-width: 140px; }
+QTabBar::tab:selected { color: #ffffff; background: #0b0d10; border-bottom: 2px solid #3d8bff; }
+QTabBar::tab:hover { color: #dfe4ea; }
 QTableView { background: #08090b; alternate-background-color: #0c0e11; gridline-color: #15191e; border: none; selection-background-color: #1b3a66; selection-color: #ffffff; }
 QHeaderView::section { background: #111418; color: #7f8a98; border: none; border-bottom: 1px solid #252a31; padding: 3px 8px; }
 QLineEdit, QSpinBox, QComboBox { background: #08090b; border: 1px solid #252a31; border-radius: 0; padding: 2px 6px; color: #dfe4ea; min-height: 18px; }
@@ -90,8 +95,7 @@ QComboBox QAbstractItemView { background: #111418; border: 1px solid #252a31; se
 QToolButton { border: 1px solid #252a31; background: #181c22; padding: 3px 10px; border-radius: 0; color: #dfe4ea; }
 QToolButton:hover { border-color: #3d8bff; }
 QToolButton:checked { background: #3d8bff; border-color: #3d8bff; color: #ffffff; }
-QToolButton#rbsPlay { min-width: 30px; font-size: 13px; }
-QToolButton::menu-indicator { image: none; }
+QToolButton#rbsPlay { min-width: 34px; min-height: 30px; font-size: 15px; }
 QProgressBar { background: #1c2128; border: none; max-height: 6px; }
 QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3ecf7a, stop:0.8 #f2c94c, stop:1 #ef4444); }
 QCheckBox { color: #dfe4ea; spacing: 6px; }
@@ -120,6 +124,13 @@ static QLabel *dimLabel(const QString& text, QWidget *parent = nullptr)
     return label;
 }
 
+static QVBoxLayout *noMargins(QVBoxLayout *layout)
+{
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    return layout;
+}
+
 RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *parent) :
     QMainWindow(parent),
     m_layout(AllInOne),
@@ -133,7 +144,6 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     setObjectName("RBSWindow");
     setWindowTitle("RBS");
     setWindowIcon(QIcon(":/sdrangel_icon.png"));
-    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
     setStyleSheet(m_styleSheet);
 
     m_controller = new RBSController(webAPIAdapterInterface, this);
@@ -151,19 +161,12 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     toolBar->addWidget(createTopBar());
     addToolBar(Qt::TopToolBarArea, toolBar);
 
-    // Panels
-    m_controlsDock = createDock("Contrôles", "rbsControlsDock", createControls());
-    m_spectrumDock = createDock("Spectre et cascade", "rbsSpectrumDock", createSpectrum());
-    m_decodesDock = createDock("Décodages", "rbsDecodesDock", createDecodes());
-    m_infoDock = createDock("Infos", "rbsInfoDock", createInfo());
-
-    QToolButton *panels = findChild<QToolButton*>("rbsPanels");
-    QMenu *panelsMenu = new QMenu(panels);
-    panelsMenu->addAction(m_spectrumDock->toggleViewAction());
-    panelsMenu->addAction(m_decodesDock->toggleViewAction());
-    panelsMenu->addAction(m_controlsDock->toggleViewAction());
-    panelsMenu->addAction(m_infoDock->toggleViewAction());
-    panels->setMenu(panelsMenu);
+    // Panels, then the two layouts they live in
+    m_controlsPanel = createControls();
+    m_spectrumPanel = createSpectrum();
+    m_decodesPanel = createDecodes();
+    m_infoPanel = createInfo();
+    createPages();
 
     // Status bar
     m_statusLocation = new QLabel(this);
@@ -175,12 +178,11 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     statusBar()->addWidget(m_statusState, 1);
     statusBar()->addPermanentWidget(dimLabel("Moteur SDRangel", this));
     statusBar()->addPermanentWidget(m_statusClock);
-    statusBar()->setSizeGripEnabled(true);
 
     float latitude = MainCore::instance()->getSettings().getLatitude();
     float longitude = MainCore::instance()->getSettings().getLongitude();
     m_statusLocation->setText(((latitude == 0.0f) && (longitude == 0.0f)) ?
-        QString("Position non définie (Préférences > Ma position)") :
+        QString("Position non définie (SDRangel > Préférences > Ma position)") :
         Maidenhead::toMaidenhead(latitude, longitude));
 
     // Decode sources
@@ -225,12 +227,18 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
         }
     });
 
-    // Layout: the one used last, all in one the first time
+    // Layout and size used last; full screen the first time, as SDR++
     QSettings settings;
     settings.beginGroup(m_settingsGroup);
-    Layout layout = settings.value("layout", "allinone").toString() == "windows" ? Windows : AllInOne;
+    setLayoutMode(settings.value("layout", "allinone").toString() == "tabs" ? Tabs : AllInOne);
+    QByteArray geometry = settings.value("geometry").toByteArray();
     settings.endGroup();
-    setLayoutMode(layout, false);
+
+    if (geometry.isEmpty()) {
+        setWindowState(Qt::WindowMaximized);
+    } else {
+        restoreGeometry(geometry);
+    }
 
     connect(&m_pollTimer, &QTimer::timeout, this, &RBSWindow::poll);
     m_pollTimer.start(250);
@@ -244,22 +252,13 @@ RBSWindow::~RBSWindow()
     delete m_spectrumTee;
 }
 
-QDockWidget *RBSWindow::createDock(const QString& title, const QString& objectName, QWidget *widget)
-{
-    QDockWidget *dock = new QDockWidget(title, this);
-    dock->setObjectName(objectName);
-    dock->setWidget(widget);
-    dock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-    return dock;
-}
-
 QWidget *RBSWindow::createTopBar()
 {
     QWidget *bar = new QWidget(this);
     bar->setObjectName("rbsTopBar");
     QHBoxLayout *layout = new QHBoxLayout(bar);
     layout->setContentsMargins(8, 4, 8, 4);
-    layout->setSpacing(10);
+    layout->setSpacing(12);
 
     m_play = new QToolButton(bar);
     m_play->setObjectName("rbsPlay");
@@ -275,15 +274,11 @@ QWidget *RBSWindow::createTopBar()
     });
     layout->addWidget(m_play);
 
-    m_frequency = new ValueDial(bar);
-    m_frequency->setValueRange(10, 0, 9999999999ULL);
-    QFont dialFont = font();
-    dialFont.setPointSize(20);
-    m_frequency->setFont(dialFont);
-    m_frequency->setToolTip("Fréquence écoutée : molette ou flèches sur un chiffre pour la régler");
-    connect(m_frequency, &ValueDial::changed, this, [this](quint64 value) {
+    m_frequency = new RBSFrequencyDial(bar);
+    m_frequency->setRange(0, 2000000000LL);   // RSP1B: up to 2 GHz
+    connect(m_frequency, &RBSFrequencyDial::changed, this, [this](qint64 value) {
         if (!m_updatingControls) {
-            m_controller->setTunedFrequency((qint64) value);
+            m_controller->setTunedFrequency(value);
         }
     });
     layout->addWidget(m_frequency);
@@ -329,29 +324,23 @@ QWidget *RBSWindow::createTopBar()
 
     layout->addStretch(1);
 
-    QToolButton *panels = new QToolButton(bar);
-    panels->setObjectName("rbsPanels");
-    panels->setText("Panneaux ▾");
-    panels->setPopupMode(QToolButton::InstantPopup);
-    layout->addWidget(panels);
-
     m_layoutAllInOne = new QToolButton(bar);
     m_layoutAllInOne->setText("Tout-en-un");
     m_layoutAllInOne->setCheckable(true);
-    m_layoutWindows = new QToolButton(bar);
-    m_layoutWindows->setText("Fenêtres");
-    m_layoutWindows->setCheckable(true);
+    m_layoutTabs = new QToolButton(bar);
+    m_layoutTabs->setText("Onglets");
+    m_layoutTabs->setCheckable(true);
     QButtonGroup *layoutGroup = new QButtonGroup(bar);
     layoutGroup->setExclusive(true);
     layoutGroup->addButton(m_layoutAllInOne);
-    layoutGroup->addButton(m_layoutWindows);
+    layoutGroup->addButton(m_layoutTabs);
     QHBoxLayout *layoutSwitch = new QHBoxLayout();
     layoutSwitch->setSpacing(0);
     layoutSwitch->addWidget(m_layoutAllInOne);
-    layoutSwitch->addWidget(m_layoutWindows);
+    layoutSwitch->addWidget(m_layoutTabs);
     layout->addLayout(layoutSwitch);
     connect(m_layoutAllInOne, &QToolButton::clicked, this, [this]() { setLayoutMode(AllInOne); });
-    connect(m_layoutWindows, &QToolButton::clicked, this, [this]() { setLayoutMode(Windows); });
+    connect(m_layoutTabs, &QToolButton::clicked, this, [this]() { setLayoutMode(Tabs); });
 
     QLabel *logo = new QLabel("RBS", bar);   // Placeholder until the logo files are supplied
     logo->setObjectName("rbsLogo");
@@ -362,14 +351,9 @@ QWidget *RBSWindow::createTopBar()
 
 QWidget *RBSWindow::createControls()
 {
-    QScrollArea *scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    QWidget *panel = new QWidget(scroll);
+    QWidget *panel = new QWidget(this);
     panel->setObjectName("rbsPanel");
-    QVBoxLayout *layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    QVBoxLayout *layout = noMargins(new QVBoxLayout(panel));
 
     // Source
     RBSSection *source = new RBSSection("Source", panel);
@@ -423,6 +407,7 @@ QWidget *RBSWindow::createControls()
     QToolButton *openSDRangel = new QToolButton();
     openSDRangel->setText("Réglages avancés dans SDRangel");
     openSDRangel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    openSDRangel->setToolTip("Affiche la fenêtre SDRangel, cachée pendant que RBS est ouvert");
     connect(openSDRangel, &QToolButton::clicked, this, []() {
         if (MainWindow *mainWindow = MainWindow::getInstance())
         {
@@ -437,10 +422,11 @@ QWidget *RBSWindow::createControls()
     // Modes
     RBSSection *modes = new RBSSection("Mes modes", panel);
     m_modeList = new QListWidget();
-    m_modeList->setMinimumHeight(160);
+    m_modeList->setMinimumHeight(110);
+    m_modeList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     modes->addWidget(m_modeList);
     QToolButton *openModes = new QToolButton();
-    openModes->setText("Ouvrir le dossier des fiches de modes");
+    openModes->setText("Dossier des fiches de modes");
     openModes->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     openModes->setToolTip("Les fichiers .json de ce dossier ajoutent des modes ou remplacent ceux de base (même \"id\")");
     connect(openModes, &QToolButton::clicked, this, []() {
@@ -449,11 +435,9 @@ QWidget *RBSWindow::createControls()
         QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     });
     modes->addWidget(openModes);
-    layout->addWidget(modes, 1);
+    layout->addWidget(modes);
 
-    scroll->setWidget(panel);
-    scroll->setMinimumWidth(240);
-    return scroll;
+    return panel;
 }
 
 QWidget *RBSWindow::createSpectrum()
@@ -476,22 +460,26 @@ QWidget *RBSWindow::createSpectrum()
     m_spectrum->setSpectrumStyle(SpectrumSettings::Gradient);
     m_spectrum->setSpectrumColor(qRgb(61, 139, 255));
     m_spectrum->setColorMapName("Jet");
-    m_spectrum->setWaterfallShare(0.55f);
+    m_spectrum->setWaterfallShare(0.66f);   // SDR++: spectrum a third, waterfall two thirds
     m_spectrum->setReferenceLevel(-30.0f);
     m_spectrum->setPowerRange(80.0f);
     m_spectrum->setDecay(1);
     m_spectrum->setFPSPeriodMs(40);
-    m_spectrum->setMinimumHeight(220);
+    m_spectrum->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     layout->addWidget(m_spectrum, 1);
     m_spectrumTee = new RBSSpectrumTee(m_spectrum);
 
-    // SDR++ style vertical sliders: top and bottom of the scale
+    // SDR++ vertical sliders: zoom, top and bottom of the scale
     QWidget *sliders = new QWidget(panel);
     sliders->setObjectName("rbsPanel");
-    sliders->setFixedWidth(40);
+    sliders->setFixedWidth(44);
     QVBoxLayout *slidersLayout = new QVBoxLayout(sliders);
     slidersLayout->setContentsMargins(4, 6, 4, 6);
     slidersLayout->setSpacing(4);
+    m_zoom = new QSlider(Qt::Vertical, sliders);
+    m_zoom->setRange(1, 20);
+    m_zoom->setValue(1);
+    m_zoom->setToolTip("Zoom sur le centre du spectre");
     m_refLevel = new QSlider(Qt::Vertical, sliders);
     m_refLevel->setRange(-120, 20);
     m_refLevel->setValue(-30);
@@ -500,6 +488,8 @@ QWidget *RBSWindow::createSpectrum()
     m_range->setRange(-160, -20);
     m_range->setValue(-110);
     m_range->setToolTip("Bas de l'échelle (dB)");
+    slidersLayout->addWidget(dimLabel("Zoom", sliders), 0, Qt::AlignHCenter);
+    slidersLayout->addWidget(m_zoom, 1, Qt::AlignHCenter);
     slidersLayout->addWidget(dimLabel("Max", sliders), 0, Qt::AlignHCenter);
     slidersLayout->addWidget(m_refLevel, 1, Qt::AlignHCenter);
     slidersLayout->addWidget(dimLabel("Min", sliders), 0, Qt::AlignHCenter);
@@ -514,6 +504,9 @@ QWidget *RBSWindow::createSpectrum()
     };
     connect(m_refLevel, &QSlider::valueChanged, this, applyScale);
     connect(m_range, &QSlider::valueChanged, this, applyScale);
+    connect(m_zoom, &QSlider::valueChanged, this, [this](int value) {
+        m_spectrum->setFrequencyZooming((float) value, 0.5f);
+    });
 
     return panel;
 }
@@ -522,26 +515,30 @@ QWidget *RBSWindow::createDecodes()
 {
     QWidget *panel = new QWidget(this);
     panel->setObjectName("rbsPanel");
-    QVBoxLayout *layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    QVBoxLayout *layout = noMargins(new QVBoxLayout(panel));
 
     QWidget *tools = new QWidget(panel);
+    tools->setObjectName("rbsPanelHeader");
     QHBoxLayout *toolsLayout = new QHBoxLayout(tools);
-    toolsLayout->setContentsMargins(6, 4, 6, 4);
+    toolsLayout->setContentsMargins(8, 4, 6, 4);
     toolsLayout->setSpacing(6);
+    m_decodesTitle = new QLabel("Décodages", tools);
     m_search = new QLineEdit(tools);
     m_search->setPlaceholderText("Chercher : indicatif, locator, texte…");
     m_search->setClearButtonEnabled(true);
-    m_highlightedOnly = new QCheckBox("CQ / nouveaux seulement", tools);
+    m_search->setMaximumWidth(320);
+    m_highlightedOnly = new QCheckBox("CQ seulement", tools);
     QToolButton *copy = new QToolButton(tools);
     copy->setText("Copier");
     QToolButton *exportButton = new QToolButton(tools);
     exportButton->setText("Exporter CSV");
     QToolButton *clear = new QToolButton(tools);
     clear->setText("Effacer");
+    toolsLayout->addWidget(m_decodesTitle);
+    toolsLayout->addSpacing(12);
     toolsLayout->addWidget(m_search, 1);
     toolsLayout->addWidget(m_highlightedOnly);
+    toolsLayout->addStretch(1);
     toolsLayout->addWidget(copy);
     toolsLayout->addWidget(exportButton);
     toolsLayout->addWidget(clear);
@@ -562,6 +559,7 @@ QWidget *RBSWindow::createDecodes()
     m_decodeTable->horizontalHeader()->setStretchLastSection(true);
     m_decodeTable->horizontalHeader()->setHighlightSections(false);
     m_decodeTable->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_decodeTable->horizontalHeader()->setDefaultSectionSize(110);
     layout->addWidget(m_decodeTable, 1);
 
     connect(m_search, &QLineEdit::textChanged, m_decodeFilter, &RBSDecodeFilter::setSearch);
@@ -575,14 +573,9 @@ QWidget *RBSWindow::createDecodes()
 
 QWidget *RBSWindow::createInfo()
 {
-    QScrollArea *scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    QWidget *panel = new QWidget(scroll);
+    QWidget *panel = new QWidget(this);
     panel->setObjectName("rbsPanel");
-    QVBoxLayout *layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    QVBoxLayout *layout = noMargins(new QVBoxLayout(panel));
 
     RBSSection *today = new RBSSection("Aujourd'hui", panel);
     m_statsMessages = new QLabel("0");
@@ -596,154 +589,121 @@ QWidget *RBSWindow::createInfo()
 
     RBSSection *events = new RBSSection("Événements", panel);
     m_events = new QListWidget();
-    m_events->setMinimumHeight(140);
+    m_events->setMinimumHeight(120);
     m_events->setSelectionMode(QAbstractItemView::NoSelection);
     events->addWidget(m_events);
-    layout->addWidget(events, 1);
+    layout->addWidget(events);
 
     RBSSection *antenna = new RBSSection("Antenne", panel);
     m_antennaInfo = new QLabel("—");
     antenna->form()->addRow(dimLabel("Conseillée"), m_antennaInfo);
     layout->addWidget(antenna);
 
-    scroll->setWidget(panel);
-    scroll->setMinimumWidth(220);
+    return panel;
+}
+
+// A scroll area whose content is a column the panels can be added to
+static QScrollArea *scrollColumn(QWidget *parent, QVBoxLayout *&column)
+{
+    QScrollArea *scroll = new QScrollArea(parent);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setFrameShape(QFrame::NoFrame);
+    QWidget *content = new QWidget(scroll);
+    content->setObjectName("rbsPanel");
+    column = noMargins(new QVBoxLayout(content));
+    column->addStretch(1);
+    scroll->setWidget(content);
     return scroll;
 }
 
-// ---------------------------------------------------------------------------
-// Layouts
-
-void RBSWindow::setLayoutMode(Layout layout, bool save)
+void RBSWindow::createPages()
 {
-    if (save) {
-        saveLayout();
-    }
+    m_pages = new QStackedWidget(this);
 
+    // All in one: fixed side menu | spectrum and waterfall over the decodes
+    m_allInOnePage = new QWidget(m_pages);
+    QHBoxLayout *allInOne = new QHBoxLayout(m_allInOnePage);
+    allInOne->setContentsMargins(0, 0, 0, 0);
+    allInOne->setSpacing(0);
+    QScrollArea *sidebar = scrollColumn(m_allInOnePage, m_sidebarBox);
+    sidebar->setObjectName("rbsSidebar");
+    sidebar->setFixedWidth(m_sidebarWidth);
+    allInOne->addWidget(sidebar);
+    QWidget *center = new QWidget(m_allInOnePage);
+    m_centerBox = noMargins(new QVBoxLayout(center));
+    allInOne->addWidget(center, 1);
+    m_pages->addWidget(m_allInOnePage);
+
+    // Tabs: each panel full window
+    m_tabs = new QTabWidget(m_pages);
+    m_tabs->setDocumentMode(true);
+    m_tabs->setUsesScrollButtons(true);
+    QWidget *spectrumTab = new QWidget(m_tabs);
+    m_tabSpectrumBox = noMargins(new QVBoxLayout(spectrumTab));
+    QWidget *decodesTab = new QWidget(m_tabs);
+    m_tabDecodesBox = noMargins(new QVBoxLayout(decodesTab));
+    m_tabs->addTab(spectrumTab, "Spectre et cascade");
+    m_tabs->addTab(decodesTab, "Décodages");
+    m_tabs->addTab(scrollColumn(m_tabs, m_tabControlsBox), "Contrôles");
+    m_tabs->addTab(scrollColumn(m_tabs, m_tabInfoBox), "Infos");
+    m_pages->addWidget(m_tabs);
+
+    setCentralWidget(m_pages);
+}
+
+void RBSWindow::setLayoutMode(Layout layout)
+{
     m_layout = layout;
     m_layoutAllInOne->setChecked(layout == AllInOne);
-    m_layoutWindows->setChecked(layout == Windows);
+    m_layoutTabs->setChecked(layout == Tabs);
 
-    if (!restoreLayout(layout))
+    if (layout == AllInOne)
     {
-        if (layout == AllInOne) {
-            arrangeAllInOne();
-        } else {
-            arrangeWindows();
-        }
+        // Side menu: controls then info, above the stretch
+        m_sidebarBox->insertWidget(0, m_controlsPanel);
+        m_sidebarBox->insertWidget(1, m_infoPanel);
+        m_centerBox->addWidget(m_spectrumPanel, 1);
+        m_centerBox->addWidget(m_decodesPanel, 0);
+        m_decodesPanel->setFixedHeight(m_decodesHeight);
+        m_pages->setCurrentWidget(m_allInOnePage);
     }
+    else
+    {
+        m_tabSpectrumBox->addWidget(m_spectrumPanel, 1);
+        m_decodesPanel->setMinimumHeight(0);
+        m_decodesPanel->setMaximumHeight(QWIDGETSIZE_MAX);
+        m_tabDecodesBox->addWidget(m_decodesPanel, 1);
+        m_tabControlsBox->insertWidget(0, m_controlsPanel);
+        m_tabInfoBox->insertWidget(0, m_infoPanel);
+        m_pages->setCurrentWidget(m_tabs);
+    }
+
+    m_spectrumPanel->show();
+    m_decodesPanel->show();
+    m_controlsPanel->show();
+    m_infoPanel->show();
 
     QSettings settings;
     settings.beginGroup(m_settingsGroup);
-    settings.setValue("layout", layout == Windows ? "windows" : "allinone");
+    settings.setValue("layout", layout == Tabs ? "tabs" : "allinone");
     settings.endGroup();
-}
-
-void RBSWindow::saveLayout()
-{
-    QString key = m_layout == Windows ? "windows" : "allinone";
-    QSettings settings;
-    settings.beginGroup(m_settingsGroup);
-    settings.setValue(key + "/geometry", saveGeometry());
-    settings.setValue(key + "/state", saveState());
-    settings.endGroup();
-}
-
-bool RBSWindow::restoreLayout(Layout layout)
-{
-    QString key = layout == Windows ? "windows" : "allinone";
-    QSettings settings;
-    settings.beginGroup(m_settingsGroup);
-    QByteArray geometry = settings.value(key + "/geometry").toByteArray();
-    QByteArray state = settings.value(key + "/state").toByteArray();
-    settings.endGroup();
-
-    if (geometry.isEmpty() || state.isEmpty()) {
-        return false;
-    }
-
-    restoreGeometry(geometry);
-    return restoreState(state);
-}
-
-void RBSWindow::arrangeAllInOne()
-{
-    setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
-    setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
-    setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
-    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
-
-    const QList<QDockWidget*> docks = {m_controlsDock, m_spectrumDock, m_decodesDock, m_infoDock};
-
-    for (auto dock : docks)
-    {
-        dock->setFloating(false);
-        removeDockWidget(dock);
-    }
-
-    addDockWidget(Qt::LeftDockWidgetArea, m_controlsDock);
-    addDockWidget(Qt::TopDockWidgetArea, m_spectrumDock);
-    addDockWidget(Qt::BottomDockWidgetArea, m_decodesDock);
-    addDockWidget(Qt::RightDockWidgetArea, m_infoDock);
-
-    for (auto dock : docks) {
-        dock->show();
-    }
-
-    QRect available = screen() ? screen()->availableGeometry() : QRect(0, 0, 1600, 900);
-    resize(std::min(1500, available.width() - 40), std::min(950, available.height() - 60));
-    resizeDocks({m_controlsDock, m_infoDock}, {260, 240}, Qt::Horizontal);
-    resizeDocks({m_spectrumDock, m_decodesDock}, {480, 260}, Qt::Vertical);
-}
-
-void RBSWindow::arrangeWindows()
-{
-    QRect available = screen() ? screen()->availableGeometry() : QRect(0, 0, 1600, 900);
-    const QList<QDockWidget*> docks = {m_controlsDock, m_spectrumDock, m_decodesDock, m_infoDock};
-
-    for (auto dock : docks)
-    {
-        if (!dockWidgetArea(dock)) {
-            addDockWidget(Qt::LeftDockWidgetArea, dock);
-        }
-
-        dock->setFloating(true);
-        dock->show();
-    }
-
-    // This window keeps only the top bar and the status bar, across the top of the screen
-    int margin = 16;
-    int barHeight = minimumSizeHint().height();
-    setGeometry(available.x() + margin, available.y() + margin + 30, available.width() - 2 * margin, barHeight);
-
-    int x0 = available.x() + margin;
-    int y0 = available.y() + margin + 30 + barHeight + 40;
-    int width = available.width() - 2 * margin;
-    int height = available.bottom() - y0 - margin;
-    int leftWidth = width * 62 / 100;
-    int rightWidth = width - leftWidth - 8;
-    int topHeight = height * 60 / 100;
-    int bottomHeight = height - topHeight - 40;
-
-    m_spectrumDock->setGeometry(x0, y0, leftWidth, topHeight);
-    m_decodesDock->setGeometry(x0, y0 + topHeight + 40, leftWidth, bottomHeight);
-    m_controlsDock->setGeometry(x0 + leftWidth + 8, y0, rightWidth, topHeight);
-    m_infoDock->setGeometry(x0 + leftWidth + 8, y0 + topHeight + 40, rightWidth, bottomHeight);
 }
 
 void RBSWindow::closeEvent(QCloseEvent *event)
 {
-    saveLayout();
-
-    // Floating panels belong to this window: hide them with it
-    for (auto dock : {m_controlsDock, m_spectrumDock, m_decodesDock, m_infoDock})
-    {
-        if (dock->isFloating()) {
-            dock->hide();
-        }
-    }
-
+    QSettings settings;
+    settings.beginGroup(m_settingsGroup);
+    settings.setValue("geometry", saveGeometry());
+    settings.endGroup();
     event->accept();
+
+    // RBS is the application: closing it closes SDRangel, which saves its configuration
+    QTimer::singleShot(0, []() {
+        if (MainWindow *mainWindow = MainWindow::getInstance()) {
+            mainWindow->close();
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -804,7 +764,7 @@ void RBSWindow::showModeSettings(const RBSMode& mode)
     m_antennaInfo->setText(mode.m_antenna.isEmpty() ? "—" : mode.m_antenna);
 
     m_updatingControls = true;
-    m_frequency->setValue((quint64) mode.tunedFrequency());
+    m_frequency->setValue(mode.tunedFrequency());
     m_updatingControls = false;
 }
 
@@ -819,29 +779,29 @@ void RBSWindow::setupDecodeView(const RBSMode& mode)
 
     if (mode.m_view == "ft8")
     {
-        m_decodesDock->setWindowTitle("Décodages FT8");
+        m_decodesTitle->setText("Décodages FT8");
         m_highlightedOnly->setText("CQ seulement");
         m_decodeModel->setColumns({"UTC", "dB", "DT", "Δf", "Message", "Locator", "Distance"});
     }
     else if (mode.m_view == "aprs")
     {
-        m_decodesDock->setWindowTitle("Stations APRS");
+        m_decodesTitle->setText("Stations APRS");
         m_highlightedOnly->setText("Nouvelles seulement");
         m_decodeModel->setColumns({"Heure", "Indicatif", "Vers", "Via", "Position", "Distance", "Commentaire"});
     }
     else if (mode.m_view == "adsb")
     {
-        m_decodesDock->setWindowTitle("Avions ADS-B");
+        m_decodesTitle->setText("Avions ADS-B");
         m_highlightedOnly->setText("Nouveaux seulement");
         m_decodeModel->setColumns({"Vu", "Indicatif", "ICAO", "Altitude", "Cap", "Distance", "Infos"});
     }
     else
     {
-        m_decodesDock->setWindowTitle("Décodages");
+        m_decodesTitle->setText("Décodages");
         m_decodeModel->setColumns({"Heure", "Message"});
     }
 
-    m_decodeTable->resizeColumnsToContents();
+    m_tabs->setTabText(1, m_decodesTitle->text());
 }
 
 void RBSWindow::onControllerState(RBSController::State state, const QString& message)
@@ -948,19 +908,19 @@ void RBSWindow::poll()
         return;
     }
 
-    if (running && (m_controller->getState() == RBSController::Running)) {
-        attachSpectrum(); // in case the device set was recreated
+    if (running) {
+        attachSpectrum(); // late start, or the device set was recreated
     }
 
-    // Frequency, unless the user is turning the dial
-    if (!m_frequency->hasFocus())
+    // Frequency, unless the mouse is on the dial
+    if (!m_frequency->isInteracting())
     {
         qint64 tuned = m_controller->getTunedFrequency();
 
-        if ((tuned > 0) && ((quint64) tuned != m_frequency->getValueNew()))
+        if ((tuned > 0) && (tuned != m_frequency->value()))
         {
             m_updatingControls = true;
-            m_frequency->setValue((quint64) tuned);
+            m_frequency->setValue(tuned);
             m_updatingControls = false;
         }
     }

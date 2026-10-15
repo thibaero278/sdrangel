@@ -84,9 +84,17 @@ void RBSFT8Log::poll()
 
     file.seek(m_position);
 
-    while (file.canReadLine())
+    // canReadLine() only looks at what is already buffered, which is nothing right after the
+    // seek: read until the end instead, leaving a line still being written for the next poll
+    while (!file.atEnd())
     {
-        QString line = QString::fromUtf8(file.readLine()).trimmed();
+        QByteArray bytes = file.readLine();
+
+        if (!bytes.endsWith('\n')) {
+            break;
+        }
+
+        QString line = QString::fromUtf8(bytes).trimmed();
         m_position = file.pos();
         Decode decode;
 

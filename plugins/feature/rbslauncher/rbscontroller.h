@@ -72,6 +72,7 @@ public:
     bool getDeviceSetting(const QString& key, int& value) const;
 
     static const char* const m_hwType;
+    static const char* const m_channelTitle;  //!< Title given to the channels RBS adds
 
 signals:
     void stateChanged(RBSController::State state, const QString& message);
@@ -106,6 +107,7 @@ private:
     DeviceSet *findRxDeviceSet() const;
     static bool rspAvailable();
     QSet<uint64_t> channelUIDs() const;
+    QList<int> rbsChannelIndexes() const;
 
 private slots:
     void poll();

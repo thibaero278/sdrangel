@@ -30,6 +30,7 @@ if(NOT SERVER_MODE)
         rbsspectrumtee.cpp
         rbssection.cpp
         rbsdecodemodel.cpp
+        rbsfrequencydial.cpp
         ${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver/mcpdatafeed.cpp
         rbslauncher.qrc
     )
@@ -43,6 +44,7 @@ if(NOT SERVER_MODE)
         rbsspectrumtee.h
         rbssection.h
         rbsdecodemodel.h
+        rbsfrequencydial.h
         ${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver/mcpdatafeed.h
     )
     include_directories(${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver)

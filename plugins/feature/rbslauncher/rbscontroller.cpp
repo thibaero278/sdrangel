@@ -35,6 +35,7 @@
 #include "rbscontroller.h"
 
 const char* const RBSController::m_hwType = "SDRplayV3";
+const char* const RBSController::m_channelTitle = "RBS";
 
 RBSController::RBSController(WebAPIAdapterInterface *webAPIAdapterInterface, QObject *parent) :
     QObject(parent),
@@ -143,6 +144,29 @@ QSet<uint64_t> RBSController::channelUIDs() const
     }
 
     return uids;
+}
+
+// Channels RBS added, recognised by their title, in increasing index order
+QList<int> RBSController::rbsChannelIndexes() const
+{
+    QList<int> indexes;
+    int deviceSetIndex = getDeviceSetIndex();
+    DeviceSet *deviceSet = getDeviceSet();
+
+    if (!deviceSet) {
+        return indexes;
+    }
+
+    for (int i = 0; i < deviceSet->getNumberOfChannels(); i++)
+    {
+        QString title;
+
+        if (ChannelWebAPIUtils::getChannelSetting(deviceSetIndex, i, "title", title) && (title == m_channelTitle)) {
+            indexes.append(i);
+        }
+    }
+
+    return indexes;
 }
 
 // The device set already used, else the first Rx one, preferring one that has the RSP1B
@@ -276,28 +300,27 @@ void RBSController::startMode(const RBSMode& mode)
         },
         8000, "Le RSP1B ne répond pas. Ferme les autres logiciels qui l'utilisent (SDR++, SDRuno, SatDump).");
 
-    // 3. Remove the decoder of the previous mode
+    // 3. Remove the decoders RBS added before, in this session or a previous one (they are saved
+    // with the configuration): they carry the RBS title. The user's own channels are left alone.
     addStep("Retrait du décodeur précédent",
         [this](QString& error) {
             (void) error;
-            int channelIndex = getChannelIndex();
+            int deviceSetIndex = getDeviceSetIndex();
+            QList<int> rbsChannels = rbsChannelIndexes();
 
-            if (channelIndex >= 0)
+            // From the highest index, as deleting a channel renumbers the ones after it
+            for (int i = rbsChannels.size() - 1; i >= 0; i--)
             {
                 SWGSDRangel::SWGSuccessResponse response;
                 SWGSDRangel::SWGErrorResponse errorResponse;
                 errorResponse.init();
-                m_webAPIAdapterInterface->devicesetChannelDelete(getDeviceSetIndex(), channelIndex, response, errorResponse);
-            }
-            else
-            {
-                m_channelUID = 0;
+                m_webAPIAdapterInterface->devicesetChannelDelete(deviceSetIndex, rbsChannels[i], response, errorResponse);
             }
 
             return true;
         },
         [this]() {
-            if (getChannelIndex() < 0)
+            if (rbsChannelIndexes().isEmpty())
             {
                 m_channelUID = 0;
                 return true;
@@ -381,6 +404,7 @@ void RBSController::startMode(const RBSMode& mode)
                 return false;
             }
 
+            ChannelWebAPIUtils::patchChannelSetting(channel, "title", QString(m_channelTitle));
             ChannelWebAPIUtils::patchChannelSetting(channel, "inputFrequencyOffset", m_mode.m_channelOffset);
 
             for (auto it = m_mode.m_channelSettings.constBegin(); it != m_mode.m_channelSettings.constEnd(); ++it)
@@ -405,7 +429,7 @@ void RBSController::startMode(const RBSMode& mode)
         [this]() {
             return isDeviceRunning();
         },
-        8000, "Le RSP1B n'a pas démarré. Vérifie le service « SDRplay API Service ».");
+        20000, "Le RSP1B n'a pas démarré. Vérifie le service « SDRplay API Service », ou débranche et rebranche le RSP1B.");
 
     m_stepStarted = false;
     m_pollTimer.start();

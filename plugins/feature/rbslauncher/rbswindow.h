@@ -31,31 +31,36 @@
 
 class QCheckBox;
 class QComboBox;
-class QDockWidget;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QProgressBar;
 class QSlider;
 class QSpinBox;
+class QStackedWidget;
+class QTabWidget;
 class QTableView;
 class QToolButton;
+class QVBoxLayout;
 class GLSpectrum;
-class ValueDial;
 class MCPDataFeed;
+class RBSFrequencyDial;
 class RBSSpectrumTee;
 class WebAPIAdapterInterface;
 
-// The RBS window: SDR++ style top bar, and four panels (controls, spectrum, decodes, info)
-// that are QDockWidgets. In the "Tout-en-un" layout they are docked in this window; in the
-// "Fenêtres" layout each one floats in its own window. Both layouts are remembered.
+// The RBS window: an SDR++ style top bar and four panels (controls, spectrum and waterfall,
+// decodes, info), shown in one of two layouts:
+// - "Tout-en-un": fixed size side menu on the left, spectrum and waterfall taking all the rest,
+//   decodes under them at a fixed height, as in SDR++
+// - "Onglets": one tab per panel, each one full window, as the SDRangel workspaces
+// The panels are moved between the two layouts; the layout used last is remembered.
 class RBSWindow : public QMainWindow
 {
     Q_OBJECT
 public:
     enum Layout {
         AllInOne,
-        Windows
+        Tabs
     };
 
     explicit RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *parent = nullptr);
@@ -77,7 +82,7 @@ private:
 
     // Top bar
     QToolButton *m_play;
-    ValueDial *m_frequency;
+    RBSFrequencyDial *m_frequency;
     QComboBox *m_modeCombo;
     QLabel *m_band;
     QProgressBar *m_level;
@@ -86,13 +91,22 @@ private:
     QLabel *m_antennaStatus;
     QLabel *m_biasTeeStatus;
     QToolButton *m_layoutAllInOne;
-    QToolButton *m_layoutWindows;
+    QToolButton *m_layoutTabs;
 
-    // Docks
-    QDockWidget *m_controlsDock;
-    QDockWidget *m_spectrumDock;
-    QDockWidget *m_decodesDock;
-    QDockWidget *m_infoDock;
+    // Panels and the layouts they move between
+    QWidget *m_controlsPanel;
+    QWidget *m_spectrumPanel;
+    QWidget *m_decodesPanel;
+    QWidget *m_infoPanel;
+    QStackedWidget *m_pages;
+    QWidget *m_allInOnePage;
+    QTabWidget *m_tabs;
+    QVBoxLayout *m_sidebarBox;
+    QVBoxLayout *m_centerBox;
+    QVBoxLayout *m_tabSpectrumBox;
+    QVBoxLayout *m_tabDecodesBox;
+    QVBoxLayout *m_tabControlsBox;
+    QVBoxLayout *m_tabInfoBox;
 
     // Controls
     QLabel *m_sampleRate;
@@ -110,12 +124,14 @@ private:
     // Spectrum
     GLSpectrum *m_spectrum;
     RBSSpectrumTee *m_spectrumTee;
+    QSlider *m_zoom;
     QSlider *m_refLevel;
     QSlider *m_range;
     qint64 m_spectrumCenter;
     int m_spectrumRate;
 
     // Decodes
+    QLabel *m_decodesTitle;
     RBSDecodeModel *m_decodeModel;
     RBSDecodeFilter *m_decodeFilter;
     QTableView *m_decodeTable;
@@ -149,14 +165,9 @@ private:
     QWidget *createSpectrum();
     QWidget *createDecodes();
     QWidget *createInfo();
-    QDockWidget *createDock(const QString& title, const QString& objectName, QWidget *widget);
-    void applyStyle();
+    void createPages();
 
-    void setLayoutMode(Layout layout, bool save = true);
-    void saveLayout();
-    bool restoreLayout(Layout layout);
-    void arrangeAllInOne();
-    void arrangeWindows();
+    void setLayoutMode(Layout layout);
 
     void setupDecodeView(const RBSMode& mode);
     void showModeSettings(const RBSMode& mode);

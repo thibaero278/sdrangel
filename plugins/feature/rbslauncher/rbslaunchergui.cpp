@@ -24,6 +24,7 @@
 
 #include "feature/featureuiset.h"
 #include "gui/rollupcontents.h"
+#include "mainwindow.h"
 
 #include "rbslauncher.h"
 #include "rbslaunchergui.h"
@@ -118,6 +119,12 @@ void RBSLauncherGUI::openWindow()
     m_windowShownOnce = true;
     m_window->raise();
     m_window->activateWindow();
+
+    // RBS is the visible application, SDRangel the engine behind it: hide its window
+    // ("Réglages avancés dans SDRangel" in RBS shows it again)
+    if (MainWindow *mainWindow = MainWindow::getInstance()) {
+        mainWindow->hide();
+    }
 }
 
 void RBSLauncherGUI::resetToDefaults()
