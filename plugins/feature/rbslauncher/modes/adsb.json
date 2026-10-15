@@ -1,0 +1,27 @@
+{
+    "id": "adsb",
+    "order": 3,
+    "name": "ADS-B",
+    "group": "Favoris",
+    "band": "1090 MHz",
+    "view": "adsb",
+    "demod": "PPM",
+    "antenna": "RH770",
+    "device": {
+        "centerFrequency": 1090000000,
+        "devSampleRate": 2000000,
+        "log2Decim": 0,
+        "fcPos": 2,
+        "ifAGC": 1,
+        "lnaIndex": 4,
+        "biasTee": 0,
+        "amNotch": 0,
+        "fmNotch": 1,
+        "dabNotch": 1
+    },
+    "channel": {
+        "type": "ADSBDemod",
+        "inputFrequencyOffset": 0,
+        "settings": {}
+    }
+}

@@ -166,7 +166,10 @@ MainWindow::MainWindow(qtwebapp::LoggerWithFile *logger, const MainParser& parse
     QFontDatabase::addApplicationFont(":/LiberationSans-Regular.ttf");
     QFontDatabase::addApplicationFont(":/LiberationMono-Regular.ttf");
 
-    QFont font("Liberation Sans");
+    // RBS: one font everywhere, Roboto Medium as in SDR++ (Liberation Sans if it cannot be loaded)
+    int robotoId = QFontDatabase::addApplicationFont(":/Roboto-Medium.ttf");
+    QStringList robotoFamilies = robotoId >= 0 ? QFontDatabase::applicationFontFamilies(robotoId) : QStringList();
+    QFont font(robotoFamilies.isEmpty() ? QString("Liberation Sans") : robotoFamilies.first());
     font.setPointSize(9);
     qApp->setFont(font);
 

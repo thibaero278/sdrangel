@@ -161,5 +161,6 @@
     <file>invert.png</file>
     <file>LiberationMono-Regular.ttf</file>
     <file>LiberationSans-Regular.ttf</file>
+    <file>Roboto-Medium.ttf</file>
   </qresource>
 </RCC>

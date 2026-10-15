@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/rbslauncher">
+    <file>modes/ft8_20m.json</file>
+    <file>modes/aprs.json</file>
+    <file>modes/adsb.json</file>
+  </qresource>
+</RCC>

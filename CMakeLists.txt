@@ -240,6 +240,7 @@ option(ENABLE_FEATURE_MORSEDECODER "Enable feature morsedecoder plugin" ON)
 option(ENABLE_FEATURE_DENOISER "Enable feature denoiser plugin" ON)
 option(ENABLE_FEATURE_FREQDISPLAY "Enable feature freqdisplay plugin" ON)
 option(ENABLE_FEATURE_MCPSERVER "Enable feature mcpserver plugin" ON)
+option(ENABLE_FEATURE_RBSLAUNCHER "Enable feature RBS launcher plugin" ON)
 
 # on windows always build external libraries
 if(WIN32)

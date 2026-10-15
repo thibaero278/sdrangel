@@ -1,0 +1,27 @@
+{
+    "id": "aprs",
+    "order": 2,
+    "name": "APRS",
+    "group": "Favoris",
+    "band": "2 m VHF",
+    "view": "aprs",
+    "demod": "FM",
+    "antenna": "Dipôle 2 m",
+    "device": {
+        "centerFrequency": 144700000,
+        "devSampleRate": 2000000,
+        "log2Decim": 3,
+        "fcPos": 2,
+        "ifAGC": 1,
+        "lnaIndex": 3,
+        "biasTee": 0,
+        "amNotch": 0,
+        "fmNotch": 1,
+        "dabNotch": 0
+    },
+    "channel": {
+        "type": "PacketDemod",
+        "inputFrequencyOffset": 100000,
+        "settings": {}
+    }
+}

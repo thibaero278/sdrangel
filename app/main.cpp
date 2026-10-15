@@ -197,26 +197,31 @@ static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *lo
 #if 1
     qApp->setStyle(QStyleFactory::create("fusion"));
 
+	// RBS theme: black, greys and blue, with sharp edges (Fusion style)
+	const QColor rbsWindow(28, 32, 38);
+	const QColor rbsButton(36, 41, 48);
+	const QColor rbsBlue(61, 139, 255);
+
 	QPalette palette;
-	palette.setColor(QPalette::Window, QColor(64,64,64));
-	palette.setColor(QPalette::WindowText, Qt::white);
-	palette.setColor(QPalette::Base, QColor(25,25,25));
-	palette.setColor(QPalette::AlternateBase, QColor(53,53,53));
-	palette.setColor(QPalette::ToolTipBase, Qt::white);
-	palette.setColor(QPalette::ToolTipText, Qt::black);
-	palette.setColor(QPalette::Text, Qt::white);
-	palette.setColor(QPalette::Button, QColor(64,64,64));
-	palette.setColor(QPalette::ButtonText, Qt::white);
-	palette.setColor(QPalette::BrightText, Qt::red);
+	palette.setColor(QPalette::Window, rbsWindow);
+	palette.setColor(QPalette::WindowText, QColor(223, 228, 234));
+	palette.setColor(QPalette::Base, QColor(11, 13, 16));
+	palette.setColor(QPalette::AlternateBase, QColor(20, 23, 28));
+	palette.setColor(QPalette::ToolTipBase, QColor(24, 28, 34));
+	palette.setColor(QPalette::ToolTipText, QColor(223, 228, 234));
+	palette.setColor(QPalette::Text, QColor(223, 228, 234));
+	palette.setColor(QPalette::Button, rbsButton);
+	palette.setColor(QPalette::ButtonText, QColor(223, 228, 234));
+	palette.setColor(QPalette::BrightText, QColor(239, 68, 68));
 
-	palette.setColor(QPalette::Light, QColor(64,64,64).lighter(125).lighter());
-	palette.setColor(QPalette::Mid, QColor(64,64,64).lighter(125));
-	palette.setColor(QPalette::Dark, QColor(64,64,64).lighter(125).darker());
+	palette.setColor(QPalette::Light, rbsButton.lighter(125).lighter());
+	palette.setColor(QPalette::Mid, rbsButton.lighter(125));
+	palette.setColor(QPalette::Dark, rbsButton.lighter(125).darker());
 
-	palette.setColor(QPalette::Link, QColor(0,0xa0,0xa0));
-	palette.setColor(QPalette::LinkVisited, QColor(0,0xa0,0xa0).lighter());
-	palette.setColor(QPalette::Highlight, QColor(0xff, 0x8c, 0x00));
-	palette.setColor(QPalette::HighlightedText, Qt::black);
+	palette.setColor(QPalette::Link, QColor(95, 168, 255));
+	palette.setColor(QPalette::LinkVisited, QColor(95, 168, 255).lighter());
+	palette.setColor(QPalette::Highlight, rbsBlue);
+	palette.setColor(QPalette::HighlightedText, Qt::white);
 
 	palette.setColor(QPalette::Disabled, QPalette::WindowText, Qt::gray);
 	palette.setColor(QPalette::Disabled, QPalette::Text, Qt::gray);
