@@ -26,6 +26,7 @@
 #include <QObject>
 #include <QSet>
 #include <QTimer>
+#include <QVariant>
 
 #include "rbsmode.h"
 
@@ -33,11 +34,12 @@ class WebAPIAdapterInterface;
 class DeviceSet;
 class ChannelAPI;
 
-// Sets SDRangel up for a mode: an Rx device set with the RSP1B, the device settings of the
-// mode, its decoder channel, and the device running.
+// Sets SDRangel up for a mode: an Rx device set with the chosen device (the RSP1B by default),
+// the device settings of the mode, its decoder channel, and the device running. Also manages
+// the listening channel (NFM, AM, USB...) that the Radio section controls.
 //
 // Device set and channel creation are asynchronous in the GUI (they go through the main
-// window's message queue), so the work is a list of steps, each with a condition that is
+// window's message queue), so the work is a queue of steps, each with a condition that is
 // polled until it holds or the step times out. Everything runs in the main thread.
 class RBSController : public QObject
 {
@@ -50,9 +52,24 @@ public:
         Error
     };
 
+    struct Listen
+    {
+        QString m_demod;        //!< "", "NFM", "AM", "USB", "LSB", "CW" or "WFM"
+        int m_bandwidth = 0;    //!< Hz
+        int m_squelch = -40;    //!< dB
+        int m_volume = 50;      //!< %, 50 = the demodulator's default level
+    };
+
     explicit RBSController(WebAPIAdapterInterface *webAPIAdapterInterface, QObject *parent = nullptr);
 
+    void setDevice(const QString& hwType, int sequence);  //!< Used from the next startMode
+    const QString& getHwType() const { return m_hwType; }
+    bool isSDRplay() const { return m_hwType == m_sdrplayHwType; }
+    bool hasDevice() const;  //!< The device set has the chosen device
+
     void startMode(const RBSMode& mode);
+    void setListen(const Listen& listen);  //!< Replaces the listening channel ("" demod: none)
+    void updateListen(const Listen& listen);  //!< Bandwidth, squelch and volume of the current one
     void startDevice();
     void stopDevice();
     bool isDeviceRunning() const;
@@ -63,6 +80,7 @@ public:
     int getDeviceSetIndex() const;     //!< -1 if none
     ChannelAPI *getChannel() const;    //!< The mode's decoder channel, null if none
     int getChannelIndex() const;
+    int getListenChannelIndex() const;
 
     qint64 getCenterFrequency() const;
     int getSampleRate() const;         //!< Baseband rate, after decimation
@@ -71,8 +89,13 @@ public:
     bool setDeviceSetting(const QString& key, int value);
     bool getDeviceSetting(const QString& key, int& value) const;
 
-    static const char* const m_hwType;
-    static const char* const m_channelTitle;  //!< Title given to the channels RBS adds
+    static const char* const m_sdrplayHwType;
+    static const char* const m_channelTitle;      //!< Title of the decoder channel RBS adds
+    static const char* const m_listenTitle;       //!< Title of the listening channel RBS adds
+
+    static QString listenChannelType(const QString& demod);
+    static int defaultBandwidth(const QString& demod);
+    static bool hasSquelch(const QString& demod);
 
 signals:
     void stateChanged(RBSController::State state, const QString& message);
@@ -89,25 +112,35 @@ private:
     };
 
     WebAPIAdapterInterface *m_webAPIAdapterInterface;
+    QString m_hwType;
+    int m_sequence;
     RBSMode m_mode;
     State m_state;
     QList<Step> m_steps;
     bool m_stepStarted;
+    bool m_modeStartPending;
     QElapsedTimer m_stepTimer;
     QTimer m_pollTimer;
 
     const void *m_deviceSet;           //!< Identity of our device set (compared, never dereferenced as such)
     uint64_t m_channelUID;             //!< Our decoder channel, 0 if none
+    uint64_t m_listenUID;              //!< Our listening channel, 0 if none
     QSet<uint64_t> m_channelsBefore;
     int m_deviceSetCountBefore;
 
     void setState(State state, const QString& message);
     void addStep(const QString& label, std::function<bool(QString&)> action, std::function<bool()> done = nullptr,
         int timeoutMs = 5000, const QString& timeoutError = QString());
+    void runSteps();
+    void addChannelSteps(const QString& label, const QString& channelType, uint64_t *uid);
     DeviceSet *findRxDeviceSet() const;
-    static bool rspAvailable();
+    bool deviceAvailable() const;
+    QString deviceName() const;
     QSet<uint64_t> channelUIDs() const;
+    int channelIndex(uint64_t uid) const;
+    ChannelAPI *channel(uint64_t uid) const;
     QList<int> rbsChannelIndexes() const;
+    void applyListenSettings(const Listen& listen, bool all);
 
 private slots:
     void poll();

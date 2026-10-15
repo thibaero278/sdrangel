@@ -18,18 +18,21 @@
 
 #include <QBrush>
 #include <QColor>
+#include <QFont>
 
 #include "rbsdecodemodel.h"
 
 RBSDecodeModel::RBSDecodeModel(QObject *parent) :
-    QAbstractTableModel(parent)
+    QAbstractTableModel(parent),
+    m_boldColumn(-1)
 {
 }
 
-void RBSDecodeModel::setColumns(const QStringList& columns)
+void RBSDecodeModel::setColumns(const QStringList& columns, int boldColumn)
 {
     beginResetModel();
     m_columns = columns;
+    m_boldColumn = boldColumn;
     m_rows.clear();
     endResetModel();
 }
@@ -123,6 +126,14 @@ QVariant RBSDecodeModel::data(const QModelIndex& index, int role) const
     case Qt::BackgroundRole:
         if (row.m_kind == Mine) {
             return QBrush(QColor(19, 33, 58));
+        }
+        break;
+    case Qt::FontRole:
+        if (index.column() == m_boldColumn)
+        {
+            QFont font;
+            font.setBold(true);
+            return font;
         }
         break;
     case KindRole:

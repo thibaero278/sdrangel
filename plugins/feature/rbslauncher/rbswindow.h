@@ -19,6 +19,8 @@
 #ifndef INCLUDE_FEATURE_RBSWINDOW_H_
 #define INCLUDE_FEATURE_RBSWINDOW_H_
 
+#include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QMainWindow>
 #include <QSet>
@@ -29,6 +31,7 @@
 #include "rbsft8log.h"
 #include "rbsmode.h"
 
+class QButtonGroup;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -41,7 +44,9 @@ class QStackedWidget;
 class QTabWidget;
 class QTableView;
 class QToolButton;
+class QTreeWidget;
 class QVBoxLayout;
+class QWidget;
 class GLSpectrum;
 class MCPDataFeed;
 class RBSFrequencyDial;
@@ -75,6 +80,16 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    // One station heard, for the view grouped by country
+    struct Station
+    {
+        QDateTime m_lastHeard;
+        QString m_lastMessage;
+        int m_messages = 0;
+        int m_bestSNR = -100;
+        double m_km = -1.0;
+    };
+
     RBSController *m_controller;
     QList<RBSMode> m_modes;
     Layout m_layout;
@@ -83,13 +98,10 @@ private:
     // Top bar
     QToolButton *m_play;
     RBSFrequencyDial *m_frequency;
-    QComboBox *m_modeCombo;
     QLabel *m_band;
     QProgressBar *m_level;
     QLabel *m_levelText;
     QLabel *m_deviceStatus;
-    QLabel *m_antennaStatus;
-    QLabel *m_biasTeeStatus;
     QToolButton *m_layoutAllInOne;
     QToolButton *m_layoutTabs;
 
@@ -108,18 +120,39 @@ private:
     QVBoxLayout *m_tabControlsBox;
     QVBoxLayout *m_tabInfoBox;
 
-    // Controls
-    QLabel *m_sampleRate;
-    QSpinBox *m_lna;
+    // Source
+    QComboBox *m_device;
+    QWidget *m_sdrplayControls;
+    QComboBox *m_sampleRate;
+    QSlider *m_lna;
+    QLabel *m_lnaText;
     QCheckBox *m_ifAGC;
+    QSlider *m_ifGain;
+    QLabel *m_ifGainText;
     QCheckBox *m_amNotch;
     QCheckBox *m_fmNotch;
     QCheckBox *m_dabNotch;
     QCheckBox *m_biasTee;
-    QLabel *m_demod;
+
+    // Radio
+    QButtonGroup *m_demodGroup;
+    QSpinBox *m_bandwidth;
+    QSlider *m_squelch;
+    QLabel *m_squelchText;
+    QSlider *m_volume;
+    QLabel *m_volumeText;
     QLabel *m_decoder;
-    QLabel *m_offset;
+    RBSController::Listen m_listen;
+    QTimer m_listenUpdateTimer;
+
+    // Modes
+    QLineEdit *m_modeSearch;
+    QComboBox *m_modeCategory;
     QListWidget *m_modeList;
+
+    // My station
+    QLineEdit *m_callsign;
+    QLineEdit *m_locator;
 
     // Spectrum
     GLSpectrum *m_spectrum;
@@ -132,21 +165,27 @@ private:
 
     // Decodes
     QLabel *m_decodesTitle;
+    QLabel *m_distanceReference;
     RBSDecodeModel *m_decodeModel;
     RBSDecodeFilter *m_decodeFilter;
+    QStackedWidget *m_decodeViews;
     QTableView *m_decodeTable;
+    QTreeWidget *m_countryTree;
     QLineEdit *m_search;
-    QCheckBox *m_highlightedOnly;
+    QCheckBox *m_groupByCountry;
     RBSFT8Log *m_ft8Log;
     MCPDataFeed *m_dataFeed;
     qint64 m_lastPacketSequence;
+    QHash<QString, QHash<QString, Station>> m_stationsByCountry;
+    bool m_countryTreeDirty;
+    QTimer m_countryTreeTimer;
 
     // Info
     QLabel *m_statsMessages;
     QLabel *m_statsCalls;
+    QLabel *m_statsCountries;
     QLabel *m_statsFarthest;
     QListWidget *m_events;
-    QLabel *m_antennaInfo;
     QSet<QString> m_callsToday;
     int m_messageCount;
     double m_farthestKm;
@@ -168,12 +207,24 @@ private:
     void createPages();
 
     void setLayoutMode(Layout layout);
-
-    void setupDecodeView(const RBSMode& mode);
+    void populateDevices();
+    void populateModeList();
     void showModeSettings(const RBSMode& mode);
+    void setupDecodeView(const RBSMode& mode);
     void readDeviceSettings();
     void attachSpectrum();
     void addEvent(const QString& text);
+    void updateStationDisplay();
+
+    void loadListen(const RBSMode& mode);
+    void saveListen();
+    void showListen();
+    void onDemodChanged(const QString& demod);
+
+    void addStation(const QString& call, const QString& message, int snr, double km);
+    void rebuildCountryTree();
+    static QString countryOf(const QString& callsign);
+
     double distanceKm(float latitude, float longitude) const;
     double distanceKm(const QString& locator) const;
     const RBSMode *findMode(const QString& modeId) const;

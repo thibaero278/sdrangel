@@ -122,9 +122,23 @@ bool RBSFT8Log::parseLine(const QString& line, Decode& decode)
     decode.m_snr = f[4].toInt();
     decode.m_dt = f[5].toDouble();
     decode.m_df = f[6].toInt();
-    decode.m_call1 = f[7];
-    decode.m_call2 = f[8];
-    decode.m_loc = f.size() > 9 ? f[9] : QString();
+
+    // Call 1 can be two words: "CQ DX W1AW FN31", "CQ POTA F4XYZ JN25"
+    QStringList t = f.mid(7);
+
+    if ((t.size() >= 4) && (t[0] == "CQ"))
+    {
+        decode.m_call1 = t[0] + " " + t[1];
+        t = t.mid(2);
+    }
+    else
+    {
+        decode.m_call1 = t[0];
+        t = t.mid(1);
+    }
+
+    decode.m_call2 = t.value(0);
+    decode.m_loc = t.mid(1).join(' ');
 
     return decode.m_dateTime.isValid();
 }

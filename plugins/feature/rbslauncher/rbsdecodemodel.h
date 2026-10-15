@@ -44,7 +44,7 @@ public:
 
     explicit RBSDecodeModel(QObject *parent = nullptr);
 
-    void setColumns(const QStringList& columns);
+    void setColumns(const QStringList& columns, int boldColumn = -1);
     void addRow(const QStringList& cells, Kind kind = Normal);
     void upsertRow(const QString& key, const QStringList& cells, Kind kind = Normal);
     void clear();
@@ -65,6 +65,7 @@ private:
     };
 
     QStringList m_columns;
+    int m_boldColumn;   //!< The most important column (the calling station), -1 if none
     QList<Row> m_rows;  //!< m_rows[0] is the newest
 };
 

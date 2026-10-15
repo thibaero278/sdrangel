@@ -2,11 +2,10 @@
     "id": "adsb",
     "order": 3,
     "name": "ADS-B",
-    "group": "Favoris",
+    "group": "Aviation",
     "band": "1090 MHz",
     "view": "adsb",
     "demod": "PPM",
-    "antenna": "RH770",
     "device": {
         "centerFrequency": 1090000000,
         "devSampleRate": 2000000,

@@ -31,6 +31,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -39,7 +40,9 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLocale>
+#include <QMenu>
 #include <QProgressBar>
+#include <QRadioButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
@@ -51,14 +54,17 @@
 #include <QTableView>
 #include <QToolBar>
 #include <QToolButton>
+#include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
 #include "channel/channelwebapiutils.h"
 #include "device/deviceapi.h"
+#include "device/deviceenumerator.h"
 #include "device/deviceset.h"
 #include "device/deviceuiset.h"
 #include "gui/glspectrum.h"
+#include "util/callsign.h"
 #include "util/maidenhead.h"
 #include "maincore.h"
 #include "mainwindow.h"
@@ -70,8 +76,15 @@
 #include "rbswindow.h"
 
 static const char* const m_settingsGroup = "RBSLauncher";
-static constexpr int m_sidebarWidth = 300;      //!< Fixed, as the SDR++ menu
-static constexpr int m_decodesHeight = 240;     //!< Fixed in the all in one layout
+static constexpr int m_sidebarWidth = 310;      //!< Fixed, as the SDR++ menu
+static constexpr int m_decodesHeight = 250;     //!< Fixed in the all in one layout
+
+// Sample rates offered for the SDRplay: device rate and decimation
+struct SampleRate { int m_devSampleRate; int m_log2Decim; };
+static const SampleRate m_sampleRates[] = {
+    {2000000, 5}, {2000000, 4}, {2000000, 3}, {2000000, 2}, {2000000, 1}, {2000000, 0},
+    {4000000, 0}, {6000000, 0}, {8000000, 0}, {10000000, 0}
+};
 
 static const char* const m_styleSheet = R"(
 RBSWindow { background: #0b0d10; }
@@ -80,14 +93,14 @@ QWidget#rbsTopBar { background: #111418; }
 QToolButton#rbsSectionHeader { background: #181c22; border: none; border-bottom: 1px solid #252a31; padding: 5px 6px; color: #dfe4ea; text-align: left; }
 QWidget#rbsSectionBody { background: #111418; border-bottom: 1px solid #252a31; }
 QWidget#rbsPanel, QScrollArea, QScrollArea > QWidget > QWidget { background: #111418; border: none; }
-QWidget#rbsSidebar { background: #111418; border-right: 1px solid #252a31; }
+QScrollArea#rbsSidebar { border-right: 1px solid #252a31; }
 QWidget#rbsPanelHeader { background: #181c22; border-top: 1px solid #252a31; border-bottom: 1px solid #252a31; }
 QTabWidget::pane { border: none; background: #0b0d10; }
 QTabBar { background: #111418; }
 QTabBar::tab { background: #111418; color: #7f8a98; padding: 7px 28px; border: none; border-right: 1px solid #252a31; border-bottom: 1px solid #252a31; min-width: 140px; }
 QTabBar::tab:selected { color: #ffffff; background: #0b0d10; border-bottom: 2px solid #3d8bff; }
 QTabBar::tab:hover { color: #dfe4ea; }
-QTableView { background: #08090b; alternate-background-color: #0c0e11; gridline-color: #15191e; border: none; selection-background-color: #1b3a66; selection-color: #ffffff; }
+QTableView, QTreeWidget { background: #08090b; alternate-background-color: #0c0e11; gridline-color: #15191e; border: none; selection-background-color: #1b3a66; selection-color: #ffffff; }
 QHeaderView::section { background: #111418; color: #7f8a98; border: none; border-bottom: 1px solid #252a31; padding: 3px 8px; }
 QLineEdit, QSpinBox, QComboBox { background: #08090b; border: 1px solid #252a31; border-radius: 0; padding: 2px 6px; color: #dfe4ea; min-height: 18px; }
 QComboBox::drop-down { border: none; width: 16px; }
@@ -95,12 +108,20 @@ QComboBox QAbstractItemView { background: #111418; border: 1px solid #252a31; se
 QToolButton { border: 1px solid #252a31; background: #181c22; padding: 3px 10px; border-radius: 0; color: #dfe4ea; }
 QToolButton:hover { border-color: #3d8bff; }
 QToolButton:checked { background: #3d8bff; border-color: #3d8bff; color: #ffffff; }
-QToolButton#rbsPlay { min-width: 34px; min-height: 30px; font-size: 15px; }
+QToolButton#rbsPlay { min-width: 52px; min-height: 42px; font-size: 24px; padding: 0; }
+QToolButton#rbsMenu { min-width: 36px; min-height: 42px; font-size: 20px; padding: 0; border: none; background: transparent; }
+QToolButton::menu-indicator { image: none; }
+QMenu { background: #111418; border: 1px solid #252a31; color: #dfe4ea; }
+QMenu::item { padding: 6px 18px; }
+QMenu::item:selected { background: #1b3a66; }
 QProgressBar { background: #1c2128; border: none; max-height: 6px; }
 QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3ecf7a, stop:0.8 #f2c94c, stop:1 #ef4444); }
-QCheckBox { color: #dfe4ea; spacing: 6px; }
+QCheckBox, QRadioButton { color: #dfe4ea; spacing: 6px; }
 QCheckBox::indicator { width: 11px; height: 11px; border: 1px solid #4a525d; background: #08090b; }
 QCheckBox::indicator:checked { background: #3d8bff; border-color: #3d8bff; }
+QRadioButton::indicator { width: 11px; height: 11px; border: 1px solid #4a525d; border-radius: 6px; background: #08090b; }
+QRadioButton::indicator:checked { background: #3d8bff; border-color: #3d8bff; }
+QRadioButton:disabled, QCheckBox:disabled, QLabel:disabled { color: #4a525d; }
 QListWidget { background: #111418; border: none; outline: 0; }
 QListWidget::item { padding: 3px 8px; border-left: 2px solid transparent; color: #dfe4ea; }
 QListWidget::item:selected { background: #13213a; border-left: 2px solid #3d8bff; color: #dfe4ea; }
@@ -108,10 +129,14 @@ QListWidget::item:disabled { color: #7f8a98; }
 QStatusBar { background: #050607; color: #7f8a98; border-top: 1px solid #252a31; }
 QStatusBar QLabel { color: #7f8a98; padding: 0 8px; }
 QStatusBar::item { border: none; }
-QSlider::groove:vertical { width: 3px; background: #2d333b; }
-QSlider::add-page:vertical { background: #3d8bff; }
-QSlider::sub-page:vertical { background: #2d333b; }
-QSlider::handle:vertical { height: 4px; margin: 0 -4px; background: #dfe4ea; }
+QSlider::groove:horizontal { height: 4px; background: #2d333b; }
+QSlider::sub-page:horizontal { background: #3d8bff; }
+QSlider::handle:horizontal { width: 10px; margin: -6px 0; background: #dfe4ea; }
+QSlider::handle:horizontal:disabled, QSlider::sub-page:horizontal:disabled { background: #4a525d; }
+QSlider#rbsScaleSlider::groove:vertical { width: 6px; background: #2d333b; }
+QSlider#rbsScaleSlider::add-page:vertical { background: #3d8bff; }
+QSlider#rbsScaleSlider::sub-page:vertical { background: #2d333b; }
+QSlider#rbsScaleSlider::handle:vertical { height: 12px; margin: 0 -9px; background: #dfe4ea; }
 QLabel { color: #dfe4ea; }
 QLabel[rbsDim="true"] { color: #7f8a98; }
 QLabel#rbsLogo { font-weight: bold; font-style: italic; font-size: 17px; letter-spacing: 2px; padding: 0 6px; }
@@ -131,6 +156,20 @@ static QVBoxLayout *noMargins(QVBoxLayout *layout)
     return layout;
 }
 
+// Slider with its value shown on the right, as in SDR++
+static QWidget *sliderRow(QSlider *slider, QLabel *value)
+{
+    QWidget *row = new QWidget();
+    QHBoxLayout *layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(8);
+    layout->addWidget(slider, 1);
+    value->setMinimumWidth(56);
+    value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    layout->addWidget(value);
+    return row;
+}
+
 RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *parent) :
     QMainWindow(parent),
     m_layout(AllInOne),
@@ -138,6 +177,7 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     m_spectrumCenter(-1),
     m_spectrumRate(-1),
     m_lastPacketSequence(0),
+    m_countryTreeDirty(false),
     m_messageCount(0),
     m_farthestKm(0.0)
 {
@@ -178,12 +218,7 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     statusBar()->addWidget(m_statusState, 1);
     statusBar()->addPermanentWidget(dimLabel("Moteur SDRangel", this));
     statusBar()->addPermanentWidget(m_statusClock);
-
-    float latitude = MainCore::instance()->getSettings().getLatitude();
-    float longitude = MainCore::instance()->getSettings().getLongitude();
-    m_statusLocation->setText(((latitude == 0.0f) && (longitude == 0.0f)) ?
-        QString("Position non définie (SDRangel > Préférences > Ma position)") :
-        Maidenhead::toMaidenhead(latitude, longitude));
+    updateStationDisplay();
 
     // Decode sources
     m_ft8Log = new RBSFT8Log(this);
@@ -191,41 +226,20 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     m_dataFeed = new MCPDataFeed(this);
     connect(m_dataFeed, &MCPDataFeed::packetsChanged, this, &RBSWindow::onPackets, Qt::QueuedConnection);
     connect(&m_adsbTimer, &QTimer::timeout, this, &RBSWindow::refreshAircraft);
+    m_countryTreeTimer.setInterval(1000);
+    connect(&m_countryTreeTimer, &QTimer::timeout, this, &RBSWindow::rebuildCountryTree);
+    m_countryTreeTimer.start();
 
-    // Mode lists
-    for (const auto& mode : m_modes) {
-        m_modeCombo->addItem(mode.m_name, mode.m_id);
-    }
-
-    QString group;
-
-    for (const auto& mode : m_modes)
-    {
-        if (mode.m_group != group)
-        {
-            group = mode.m_group;
-            QListWidgetItem *header = new QListWidgetItem(group.toUpper(), m_modeList);
-            header->setFlags(Qt::NoItemFlags);
-            QFont font = header->font();
-            font.setPointSizeF(font.pointSizeF() * 0.85);
-            header->setFont(font);
-        }
-
-        QListWidgetItem *item = new QListWidgetItem(
-            QString("%1    %2").arg(mode.m_name).arg(mode.tunedFrequency() / 1e6, 0, 'f', 3), m_modeList);
-        item->setData(Qt::UserRole, mode.m_id);
-    }
-
-    connect(m_modeCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
-        startMode(m_modeCombo->itemData(index).toString());
+    m_listenUpdateTimer.setSingleShot(true);
+    m_listenUpdateTimer.setInterval(150);
+    connect(&m_listenUpdateTimer, &QTimer::timeout, this, [this]() {
+        m_controller->updateListen(m_listen);
+        saveListen();
     });
-    connect(m_modeList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
-        QString id = item->data(Qt::UserRole).toString();
 
-        if (!id.isEmpty()) {
-            startMode(id);
-        }
-    });
+    // Sources and modes
+    populateDevices();
+    populateModeList();
 
     // Layout and size used last; full screen the first time, as SDR++
     QSettings settings;
@@ -252,19 +266,46 @@ RBSWindow::~RBSWindow()
     delete m_spectrumTee;
 }
 
+// ---------------------------------------------------------------------------
+// Top bar
+
 QWidget *RBSWindow::createTopBar()
 {
     QWidget *bar = new QWidget(this);
     bar->setObjectName("rbsTopBar");
     QHBoxLayout *layout = new QHBoxLayout(bar);
-    layout->setContentsMargins(8, 4, 8, 4);
+    layout->setContentsMargins(6, 4, 8, 4);
     layout->setSpacing(12);
+
+    // SDR++ style menu: what is not used every minute
+    QToolButton *menuButton = new QToolButton(bar);
+    menuButton->setObjectName("rbsMenu");
+    menuButton->setText("≡");
+    menuButton->setPopupMode(QToolButton::InstantPopup);
+    QMenu *menu = new QMenu(menuButton);
+    menu->addAction("Réglages experts (fenêtre SDRangel)", this, []() {
+        if (MainWindow *mainWindow = MainWindow::getInstance())
+        {
+            mainWindow->showNormal();
+            mainWindow->raise();
+            mainWindow->activateWindow();
+        }
+    });
+    menu->addAction("Dossier des fiches de modes", this, []() {
+        QString path = RBSMode::userModesPath();
+        QDir().mkpath(path);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    });
+    menu->addSeparator();
+    menu->addAction("Quitter RBS", this, [this]() { close(); });
+    menuButton->setMenu(menu);
+    layout->addWidget(menuButton);
 
     m_play = new QToolButton(bar);
     m_play->setObjectName("rbsPlay");
     m_play->setCheckable(true);
     m_play->setText("▶");
-    m_play->setToolTip("Démarrer / arrêter le RSP1B");
+    m_play->setToolTip("Démarrer / arrêter la réception");
     connect(m_play, &QToolButton::clicked, this, [this](bool checked) {
         if (checked) {
             m_controller->startDevice();
@@ -284,14 +325,6 @@ QWidget *RBSWindow::createTopBar()
     layout->addWidget(m_frequency);
     layout->addWidget(dimLabel("Hz", bar));
 
-    QVBoxLayout *modeBox = new QVBoxLayout();
-    modeBox->setSpacing(0);
-    modeBox->addWidget(dimLabel("Mode", bar));
-    m_modeCombo = new QComboBox(bar);
-    m_modeCombo->setMinimumWidth(130);
-    modeBox->addWidget(m_modeCombo);
-    layout->addLayout(modeBox);
-
     QVBoxLayout *bandBox = new QVBoxLayout();
     bandBox->setSpacing(0);
     bandBox->addWidget(dimLabel("Bande", bar));
@@ -306,21 +339,14 @@ QWidget *RBSWindow::createTopBar()
     m_level->setRange(-130, 0);
     m_level->setValue(-130);
     m_level->setTextVisible(false);
-    m_level->setFixedWidth(120);
+    m_level->setFixedWidth(130);
     levelBox->addWidget(m_level);
     m_levelText = new QLabel("—", bar);
     levelBox->addWidget(m_levelText);
     layout->addLayout(levelBox);
 
-    QVBoxLayout *statusBox = new QVBoxLayout();
-    statusBox->setSpacing(0);
     m_deviceStatus = new QLabel("■ RSP1B", bar);
-    m_antennaStatus = new QLabel("■ —", bar);
-    m_biasTeeStatus = new QLabel("■ Bias-T", bar);
-    statusBox->addWidget(m_deviceStatus);
-    statusBox->addWidget(m_antennaStatus);
-    statusBox->addWidget(m_biasTeeStatus);
-    layout->addLayout(statusBox);
+    layout->addWidget(m_deviceStatus);
 
     layout->addStretch(1);
 
@@ -349,38 +375,97 @@ QWidget *RBSWindow::createTopBar()
     return bar;
 }
 
+// ---------------------------------------------------------------------------
+// Controls: Source, Radio, Modes, My station
+
 QWidget *RBSWindow::createControls()
 {
     QWidget *panel = new QWidget(this);
     panel->setObjectName("rbsPanel");
     QVBoxLayout *layout = noMargins(new QVBoxLayout(panel));
 
-    // Source
+    // --- Source
     RBSSection *source = new RBSSection("Source", panel);
-    source->form()->addRow(dimLabel("Récepteur"), new QLabel("SDRplay RSP1B"));
-    m_sampleRate = new QLabel("—");
-    source->form()->addRow(dimLabel("Échantillonnage"), m_sampleRate);
-    m_lna = new QSpinBox();
+    m_device = new QComboBox();
+    m_device->setToolTip("D'où viennent les échantillons : le RSP1B, la carte son (IQ), un fichier IQ, le réseau…");
+    source->addWidget(m_device);
+
+    m_sdrplayControls = new QWidget();
+    QFormLayout *sdrplay = new QFormLayout(m_sdrplayControls);
+    sdrplay->setContentsMargins(0, 4, 0, 0);
+    sdrplay->setHorizontalSpacing(8);
+    sdrplay->setVerticalSpacing(5);
+    sdrplay->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    m_sampleRate = new QComboBox();
+
+    for (const auto& rate : m_sampleRates)
+    {
+        int baseband = rate.m_devSampleRate >> rate.m_log2Decim;
+        QString text = baseband >= 1000000 ? QString("%1 MHz").arg(baseband / 1e6, 0, 'g', 3) : QString("%1 kHz").arg(baseband / 1e3, 0, 'g', 4);
+        m_sampleRate->addItem(text, QVariant::fromValue(QPoint(rate.m_devSampleRate, rate.m_log2Decim)));
+    }
+
+    m_sampleRate->setToolTip("Largeur de spectre reçue. Plus large = plus de signaux visibles, plus de CPU");
+    sdrplay->addRow(dimLabel("Échantillonnage"), m_sampleRate);
+
+    m_lna = new QSlider(Qt::Horizontal);
     m_lna->setRange(0, 9);
-    m_lna->setToolTip("Atténuation LNA : 0 = gain maximal, 9 = atténuation maximale");
-    source->form()->addRow(dimLabel("LNA"), m_lna);
+    m_lnaText = new QLabel();
+    m_lna->setToolTip("Gain LNA du RSP1B. Trop fort en VHF près de Lyon : saturation");
+    sdrplay->addRow(dimLabel("Gain LNA"), sliderRow(m_lna, m_lnaText));
+
     m_ifAGC = new QCheckBox("AGC IF");
+    sdrplay->addRow(m_ifAGC);
+    m_ifGain = new QSlider(Qt::Horizontal);
+    m_ifGain->setRange(0, 39);
+    m_ifGainText = new QLabel();
+    m_ifGain->setToolTip("Gain IF, réglable quand l'AGC IF est coupée");
+    sdrplay->addRow(dimLabel("Gain IF"), sliderRow(m_ifGain, m_ifGainText));
+
     m_amNotch = new QCheckBox("Notch AM (PO)");
     m_fmNotch = new QCheckBox("Notch FM broadcast");
     m_dabNotch = new QCheckBox("Notch DAB");
     m_biasTee = new QCheckBox("Bias-T (alimente l'antenne)");
-    m_biasTee->setToolTip("Envoie une tension sur le câble : seulement pour une antenne active (GNSS, MLA-30+ alimentée par le câble)");
-    source->addWidget(m_ifAGC);
-    source->addWidget(m_amNotch);
-    source->addWidget(m_fmNotch);
-    source->addWidget(m_dabNotch);
-    source->addWidget(m_biasTee);
+    m_biasTee->setToolTip("Envoie une tension sur le câble : seulement pour une antenne active");
+    sdrplay->addRow(m_amNotch);
+    sdrplay->addRow(m_fmNotch);
+    sdrplay->addRow(m_dabNotch);
+    sdrplay->addRow(m_biasTee);
+    source->addWidget(m_sdrplayControls);
     layout->addWidget(source);
 
-    connect(m_lna, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+    connect(m_device, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+        QString hwType = m_device->itemData(index, Qt::UserRole).toString();
+        int sequence = m_device->itemData(index, Qt::UserRole + 1).toInt();
+        m_controller->setDevice(hwType, sequence);
+        QSettings settings;
+        settings.beginGroup(m_settingsGroup);
+        settings.setValue("deviceHwType", hwType);
+        settings.setValue("deviceSequence", sequence);
+        settings.endGroup();
+        m_sdrplayControls->setVisible(m_controller->isSDRplay());
+        startMode(m_controller->getMode().m_id);
+    });
+    connect(m_sampleRate, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+        QPoint rate = m_sampleRate->itemData(index).toPoint();
+        m_controller->setDeviceSetting("devSampleRate", rate.x());
+        m_controller->setDeviceSetting("log2Decim", rate.y());
+    });
+    connect(m_lna, &QSlider::valueChanged, this, [this](int value) {
+        m_lnaText->setText(QString("%1 / 9").arg(value));
         if (!m_updatingControls) {
-            m_controller->setDeviceSetting("lnaIndex", value);
+            m_controller->setDeviceSetting("lnaIndex", 9 - value); // index 0 = most gain
         }
+    });
+    connect(m_ifGain, &QSlider::valueChanged, this, [this](int value) {
+        m_ifGainText->setText(QString("%1 dB").arg(value));
+        if (!m_updatingControls) {
+            m_controller->setDeviceSetting("ifGain", value - 59); // gain reduction 59..20 dB
+        }
+    });
+    connect(m_ifAGC, &QCheckBox::toggled, this, [this](bool checked) {
+        m_ifGain->setEnabled(!checked);
     });
 
     auto connectCheck = [this](QCheckBox *check, const QString& key) {
@@ -396,49 +481,249 @@ QWidget *RBSWindow::createControls()
     connectCheck(m_dabNotch, "dabNotch");
     connectCheck(m_biasTee, "biasTee");
 
-    // Radio
+    // --- Radio: listening channel, SDR++ style
     RBSSection *radio = new RBSSection("Radio", panel);
-    m_demod = new QLabel("—");
-    m_decoder = new QLabel("—");
-    m_offset = new QLabel("—");
-    radio->form()->addRow(dimLabel("Démodulation"), m_demod);
-    radio->form()->addRow(dimLabel("Décodeur"), m_decoder);
-    radio->form()->addRow(dimLabel("Décalage canal"), m_offset);
-    QToolButton *openSDRangel = new QToolButton();
-    openSDRangel->setText("Réglages avancés dans SDRangel");
-    openSDRangel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    openSDRangel->setToolTip("Affiche la fenêtre SDRangel, cachée pendant que RBS est ouvert");
-    connect(openSDRangel, &QToolButton::clicked, this, []() {
-        if (MainWindow *mainWindow = MainWindow::getInstance())
-        {
-            mainWindow->showNormal();
-            mainWindow->raise();
-            mainWindow->activateWindow();
-        }
-    });
-    radio->addWidget(openSDRangel);
+    QWidget *demods = new QWidget();
+    QGridLayout *demodGrid = new QGridLayout(demods);
+    demodGrid->setContentsMargins(0, 0, 0, 4);
+    demodGrid->setHorizontalSpacing(6);
+    demodGrid->setVerticalSpacing(4);
+    m_demodGroup = new QButtonGroup(this);
+    m_demodGroup->setExclusive(true);
+    const QStringList demodNames = {"Coupé", "NFM", "AM", "WFM", "USB", "LSB", "CW"};
+
+    for (int i = 0; i < demodNames.size(); i++)
+    {
+        QRadioButton *button = new QRadioButton(demodNames[i]);
+        button->setProperty("demod", i == 0 ? QString() : demodNames[i]);
+        m_demodGroup->addButton(button, i);
+        demodGrid->addWidget(button, i / 4, i % 4);
+    }
+
+    radio->addWidget(demods);
+
+    m_bandwidth = new QSpinBox();
+    m_bandwidth->setRange(100, 250000);
+    m_bandwidth->setSingleStep(100);
+    m_bandwidth->setSuffix(" Hz");
+    m_bandwidth->setGroupSeparatorShown(true);
+    radio->form()->addRow(dimLabel("Bande passante"), m_bandwidth);
+
+    m_squelch = new QSlider(Qt::Horizontal);
+    m_squelch->setRange(-100, 0);
+    m_squelchText = new QLabel();
+    radio->form()->addRow(dimLabel("SQL"), sliderRow(m_squelch, m_squelchText));
+
+    m_volume = new QSlider(Qt::Horizontal);
+    m_volume->setRange(0, 100);
+    m_volumeText = new QLabel();
+    radio->form()->addRow(dimLabel("Volume"), sliderRow(m_volume, m_volumeText));
+
+    m_decoder = dimLabel("—");
+    m_decoder->setWordWrap(true);
+    radio->addWidget(m_decoder);
     layout->addWidget(radio);
 
-    // Modes
-    RBSSection *modes = new RBSSection("Mes modes", panel);
-    m_modeList = new QListWidget();
-    m_modeList->setMinimumHeight(110);
-    m_modeList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    modes->addWidget(m_modeList);
-    QToolButton *openModes = new QToolButton();
-    openModes->setText("Dossier des fiches de modes");
-    openModes->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    openModes->setToolTip("Les fichiers .json de ce dossier ajoutent des modes ou remplacent ceux de base (même \"id\")");
-    connect(openModes, &QToolButton::clicked, this, []() {
-        QString path = RBSMode::userModesPath();
-        QDir().mkpath(path);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    connect(m_demodGroup, &QButtonGroup::idClicked, this, [this](int id) {
+        onDemodChanged(m_demodGroup->button(id)->property("demod").toString());
     });
-    modes->addWidget(openModes);
+    connect(m_bandwidth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (!m_updatingControls)
+        {
+            m_listen.m_bandwidth = value;
+            m_listenUpdateTimer.start();
+        }
+    });
+    connect(m_squelch, &QSlider::valueChanged, this, [this](int value) {
+        m_squelchText->setText(QString("%1 dB").arg(value));
+        if (!m_updatingControls)
+        {
+            m_listen.m_squelch = value;
+            m_listenUpdateTimer.start();
+        }
+    });
+    connect(m_volume, &QSlider::valueChanged, this, [this](int value) {
+        m_volumeText->setText(QString("%1 %").arg(value));
+        if (!m_updatingControls)
+        {
+            m_listen.m_volume = value;
+            m_listenUpdateTimer.start();
+        }
+    });
+
+    // --- Modes: search and category
+    RBSSection *modes = new RBSSection("Modes", panel);
+    m_modeSearch = new QLineEdit();
+    m_modeSearch->setPlaceholderText("Rechercher un mode…");
+    m_modeSearch->setClearButtonEnabled(true);
+    m_modeCategory = new QComboBox();
+    m_modeList = new QListWidget();
+    m_modeList->setMinimumHeight(120);
+    modes->addWidget(m_modeSearch);
+    modes->addWidget(m_modeCategory);
+    modes->addWidget(m_modeList);
     layout->addWidget(modes);
+
+    connect(m_modeSearch, &QLineEdit::textChanged, this, [this]() { populateModeList(); });
+    connect(m_modeCategory, QOverload<int>::of(&QComboBox::activated), this, [this]() { populateModeList(); });
+    connect(m_modeList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+        QString id = item->data(Qt::UserRole).toString();
+
+        if (!id.isEmpty()) {
+            startMode(id);
+        }
+    });
+
+    // --- My station: reference for the distances
+    RBSSection *station = new RBSSection("Ma station", panel);
+    m_callsign = new QLineEdit();
+    m_callsign->setPlaceholderText("ex. F4ABC");
+    m_callsign->setToolTip("Les messages FT8 adressés à cet indicatif sont surlignés");
+    m_locator = new QLineEdit();
+    m_locator->setPlaceholderText("ex. JN25ox");
+    m_locator->setMaxLength(6);
+    m_locator->setToolTip("Point de référence des distances");
+    station->form()->addRow(dimLabel("Indicatif"), m_callsign);
+    station->form()->addRow(dimLabel("Locator"), m_locator);
+    layout->addWidget(station);
+
+    m_callsign->setText(MainCore::instance()->getSettings().getStationName());
+    float latitude = MainCore::instance()->getSettings().getLatitude();
+    float longitude = MainCore::instance()->getSettings().getLongitude();
+
+    if ((latitude != 0.0f) || (longitude != 0.0f)) {
+        m_locator->setText(Maidenhead::toMaidenhead(latitude, longitude));
+    }
+
+    connect(m_callsign, &QLineEdit::editingFinished, this, [this]() {
+        MainSettings& settings = MainCore::instance()->getMutableSettings();
+        settings.setStationName(m_callsign->text().trimmed().toUpper());
+        settings.save();
+    });
+    connect(m_locator, &QLineEdit::editingFinished, this, [this]() {
+        float lat, lon;
+
+        if (Maidenhead::fromMaidenhead(m_locator->text().trimmed(), lat, lon))
+        {
+            MainSettings& settings = MainCore::instance()->getMutableSettings();
+            settings.setLatitude(lat);
+            settings.setLongitude(lon);
+            settings.save();
+            updateStationDisplay();
+            addEvent(QString("Position : %1").arg(m_locator->text().trimmed()));
+        }
+        else
+        {
+            addEvent(QString("Locator invalide : %1").arg(m_locator->text()));
+        }
+    });
 
     return panel;
 }
+
+void RBSWindow::populateDevices()
+{
+    QSettings settings;
+    settings.beginGroup(m_settingsGroup);
+    QString savedHwType = settings.value("deviceHwType", RBSController::m_sdrplayHwType).toString();
+    int savedSequence = settings.value("deviceSequence", -1).toInt();
+    settings.endGroup();
+
+    // Friendly names for the sources that make sense here
+    const QHash<QString, QString> names = {
+        {"SDRplayV3", "SDRplay RSP1B"},
+        {"AudioInput", "Carte son (IQ ou audio)"},
+        {"FileInput", "Fichier IQ"},
+        {"SigMFFileInput", "Fichier IQ SigMF"},
+        {"RemoteTCPInput", "Réseau (rtl_tcp, RemoteTCP)"},
+        {"RemoteInput", "Réseau (SDRangel distant)"},
+        {"KiwiSDR", "KiwiSDR (web)"},
+        {"TestSource", "Source de test"}
+    };
+
+    DeviceEnumerator *enumerator = DeviceEnumerator::instance();
+    int selected = -1;
+
+    for (int i = 0; i < enumerator->getNbRxSamplingDevices(); i++)
+    {
+        const PluginInterface::SamplingDevice *device = enumerator->getRxSamplingDevice(i);
+        QString name = names.value(device->hardwareId, device->displayedName);
+
+        if (!device->serial.isEmpty() && (device->hardwareId == "SDRplayV3")) {
+            name += QString("  ·  %1").arg(device->serial);
+        }
+
+        m_device->addItem(name);
+        int row = m_device->count() - 1;
+        m_device->setItemData(row, device->hardwareId, Qt::UserRole);
+        m_device->setItemData(row, device->sequence, Qt::UserRole + 1);
+
+        if ((device->hardwareId == savedHwType) && ((selected < 0) || (device->sequence == savedSequence))) {
+            selected = row;
+        }
+    }
+
+    if (selected < 0)
+    {
+        // Saved source absent: keep it selected anyway so that the error says it is missing
+        m_device->addItem(QString("%1 (absent)").arg(names.value(savedHwType, savedHwType)));
+        selected = m_device->count() - 1;
+        m_device->setItemData(selected, savedHwType, Qt::UserRole);
+        m_device->setItemData(selected, -1, Qt::UserRole + 1);
+    }
+
+    m_device->setCurrentIndex(selected);
+    m_controller->setDevice(savedHwType, savedSequence);
+    m_sdrplayControls->setVisible(m_controller->isSDRplay());
+}
+
+void RBSWindow::populateModeList()
+{
+    // Categories, kept in the order of the modes
+    if (m_modeCategory->count() == 0)
+    {
+        m_modeCategory->addItem("Toutes les catégories", QString());
+
+        for (const auto& mode : m_modes)
+        {
+            if (m_modeCategory->findData(mode.m_group) < 0) {
+                m_modeCategory->addItem(mode.m_group, mode.m_group);
+            }
+        }
+    }
+
+    QString search = m_modeSearch->text().trimmed();
+    QString category = m_modeCategory->currentData().toString();
+    QString currentId = m_controller->getMode().m_id;
+    m_modeList->clear();
+
+    for (const auto& mode : m_modes)
+    {
+        if (!category.isEmpty() && (mode.m_group != category)) {
+            continue;
+        }
+
+        if (!search.isEmpty()
+            && !mode.m_name.contains(search, Qt::CaseInsensitive)
+            && !mode.m_group.contains(search, Qt::CaseInsensitive)
+            && !mode.m_band.contains(search, Qt::CaseInsensitive)
+            && !QString::number(mode.tunedFrequency() / 1e6, 'f', 3).contains(search)) {
+            continue;
+        }
+
+        QListWidgetItem *item = new QListWidgetItem(
+            QString("%1    %2 MHz").arg(mode.m_name).arg(mode.tunedFrequency() / 1e6, 0, 'f', 3), m_modeList);
+        item->setData(Qt::UserRole, mode.m_id);
+        item->setToolTip(QString("%1 · %2").arg(mode.m_group).arg(mode.m_band));
+
+        if (mode.m_id == currentId) {
+            m_modeList->setCurrentItem(item);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spectrum
 
 QWidget *RBSWindow::createSpectrum()
 {
@@ -469,25 +754,27 @@ QWidget *RBSWindow::createSpectrum()
     layout->addWidget(m_spectrum, 1);
     m_spectrumTee = new RBSSpectrumTee(m_spectrum);
 
-    // SDR++ vertical sliders: zoom, top and bottom of the scale
+    // SDR++ vertical sliders: zoom, top and bottom of the scale. Wide enough to grab easily
     QWidget *sliders = new QWidget(panel);
     sliders->setObjectName("rbsPanel");
-    sliders->setFixedWidth(44);
+    sliders->setFixedWidth(60);
     QVBoxLayout *slidersLayout = new QVBoxLayout(sliders);
-    slidersLayout->setContentsMargins(4, 6, 4, 6);
-    slidersLayout->setSpacing(4);
-    m_zoom = new QSlider(Qt::Vertical, sliders);
-    m_zoom->setRange(1, 20);
-    m_zoom->setValue(1);
-    m_zoom->setToolTip("Zoom sur le centre du spectre");
-    m_refLevel = new QSlider(Qt::Vertical, sliders);
-    m_refLevel->setRange(-120, 20);
-    m_refLevel->setValue(-30);
-    m_refLevel->setToolTip("Haut de l'échelle (dB)");
-    m_range = new QSlider(Qt::Vertical, sliders);
-    m_range->setRange(-160, -20);
-    m_range->setValue(-110);
-    m_range->setToolTip("Bas de l'échelle (dB)");
+    slidersLayout->setContentsMargins(4, 8, 4, 8);
+    slidersLayout->setSpacing(6);
+
+    auto scaleSlider = [sliders](int min, int max, int value, const QString& tip) {
+        QSlider *slider = new QSlider(Qt::Vertical, sliders);
+        slider->setObjectName("rbsScaleSlider");
+        slider->setRange(min, max);
+        slider->setValue(value);
+        slider->setToolTip(tip);
+        slider->setMinimumWidth(30);
+        slider->setCursor(Qt::SizeVerCursor);
+        return slider;
+    };
+    m_zoom = scaleSlider(1, 20, 1, "Zoom sur le centre du spectre");
+    m_refLevel = scaleSlider(-120, 20, -30, "Haut de l'échelle (dB)");
+    m_range = scaleSlider(-160, -20, -110, "Bas de l'échelle (dB)");
     slidersLayout->addWidget(dimLabel("Zoom", sliders), 0, Qt::AlignHCenter);
     slidersLayout->addWidget(m_zoom, 1, Qt::AlignHCenter);
     slidersLayout->addWidget(dimLabel("Max", sliders), 0, Qt::AlignHCenter);
@@ -511,6 +798,9 @@ QWidget *RBSWindow::createSpectrum()
     return panel;
 }
 
+// ---------------------------------------------------------------------------
+// Decodes
+
 QWidget *RBSWindow::createDecodes()
 {
     QWidget *panel = new QWidget(this);
@@ -521,13 +811,14 @@ QWidget *RBSWindow::createDecodes()
     tools->setObjectName("rbsPanelHeader");
     QHBoxLayout *toolsLayout = new QHBoxLayout(tools);
     toolsLayout->setContentsMargins(8, 4, 6, 4);
-    toolsLayout->setSpacing(6);
+    toolsLayout->setSpacing(8);
     m_decodesTitle = new QLabel("Décodages", tools);
     m_search = new QLineEdit(tools);
-    m_search->setPlaceholderText("Chercher : indicatif, locator, texte…");
+    m_search->setPlaceholderText("Chercher : indicatif, pays, locator…");
     m_search->setClearButtonEnabled(true);
-    m_search->setMaximumWidth(320);
-    m_highlightedOnly = new QCheckBox("CQ seulement", tools);
+    m_search->setMaximumWidth(300);
+    m_groupByCountry = new QCheckBox("Regrouper par pays", tools);
+    m_distanceReference = dimLabel(QString(), tools);
     QToolButton *copy = new QToolButton(tools);
     copy->setText("Copier");
     QToolButton *exportButton = new QToolButton(tools);
@@ -535,10 +826,11 @@ QWidget *RBSWindow::createDecodes()
     QToolButton *clear = new QToolButton(tools);
     clear->setText("Effacer");
     toolsLayout->addWidget(m_decodesTitle);
-    toolsLayout->addSpacing(12);
+    toolsLayout->addSpacing(10);
     toolsLayout->addWidget(m_search, 1);
-    toolsLayout->addWidget(m_highlightedOnly);
+    toolsLayout->addWidget(m_groupByCountry);
     toolsLayout->addStretch(1);
+    toolsLayout->addWidget(m_distanceReference);
     toolsLayout->addWidget(copy);
     toolsLayout->addWidget(exportButton);
     toolsLayout->addWidget(clear);
@@ -547,7 +839,7 @@ QWidget *RBSWindow::createDecodes()
     m_decodeModel = new RBSDecodeModel(this);
     m_decodeFilter = new RBSDecodeFilter(this);
     m_decodeFilter->setSourceModel(m_decodeModel);
-    m_decodeTable = new QTableView(panel);
+    m_decodeTable = new QTableView();
     m_decodeTable->setModel(m_decodeFilter);
     m_decodeTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_decodeTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -559,14 +851,40 @@ QWidget *RBSWindow::createDecodes()
     m_decodeTable->horizontalHeader()->setStretchLastSection(true);
     m_decodeTable->horizontalHeader()->setHighlightSections(false);
     m_decodeTable->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    m_decodeTable->horizontalHeader()->setDefaultSectionSize(110);
-    layout->addWidget(m_decodeTable, 1);
+    m_decodeTable->horizontalHeader()->setDefaultSectionSize(95);
+
+    m_countryTree = new QTreeWidget();
+    m_countryTree->setColumnCount(5);
+    m_countryTree->setHeaderLabels({"Pays / indicatif", "Messages", "Dernier message", "Meilleur dB", "Distance"});
+    m_countryTree->setRootIsDecorated(true);
+    m_countryTree->setUniformRowHeights(true);
+    m_countryTree->header()->setDefaultSectionSize(120);
+    m_countryTree->setColumnWidth(0, 220);
+    m_countryTree->setSortingEnabled(true);
+    m_countryTree->sortByColumn(1, Qt::DescendingOrder);
+
+    m_decodeViews = new QStackedWidget(panel);
+    m_decodeViews->addWidget(m_decodeTable);
+    m_decodeViews->addWidget(m_countryTree);
+    layout->addWidget(m_decodeViews, 1);
 
     connect(m_search, &QLineEdit::textChanged, m_decodeFilter, &RBSDecodeFilter::setSearch);
-    connect(m_highlightedOnly, &QCheckBox::toggled, m_decodeFilter, &RBSDecodeFilter::setHighlightedOnly);
+    connect(m_search, &QLineEdit::textChanged, this, [this]() {
+        m_countryTreeDirty = true;
+    });
+    connect(m_groupByCountry, &QCheckBox::toggled, this, [this](bool checked) {
+        m_decodeViews->setCurrentWidget(checked ? (QWidget*) m_countryTree : (QWidget*) m_decodeTable);
+        m_countryTreeDirty = true;
+        rebuildCountryTree();
+    });
     connect(copy, &QToolButton::clicked, this, &RBSWindow::copySelection);
     connect(exportButton, &QToolButton::clicked, this, &RBSWindow::exportCSV);
-    connect(clear, &QToolButton::clicked, m_decodeModel, &RBSDecodeModel::clear);
+    connect(clear, &QToolButton::clicked, this, [this]() {
+        m_decodeModel->clear();
+        m_stationsByCountry.clear();
+        m_countryTreeDirty = true;
+        rebuildCountryTree();
+    });
 
     return panel;
 }
@@ -580,10 +898,12 @@ QWidget *RBSWindow::createInfo()
     RBSSection *today = new RBSSection("Aujourd'hui", panel);
     m_statsMessages = new QLabel("0");
     m_statsCalls = new QLabel("0");
+    m_statsCountries = new QLabel("0");
     m_statsFarthest = new QLabel("—");
     m_statsFarthest->setWordWrap(true);
     today->form()->addRow(dimLabel("Messages"), m_statsMessages);
     today->form()->addRow(dimLabel("Indicatifs"), m_statsCalls);
+    today->form()->addRow(dimLabel("Pays"), m_statsCountries);
     today->form()->addRow(dimLabel("Plus loin"), m_statsFarthest);
     layout->addWidget(today);
 
@@ -593,11 +913,6 @@ QWidget *RBSWindow::createInfo()
     m_events->setSelectionMode(QAbstractItemView::NoSelection);
     events->addWidget(m_events);
     layout->addWidget(events);
-
-    RBSSection *antenna = new RBSSection("Antenne", panel);
-    m_antennaInfo = new QLabel("—");
-    antenna->form()->addRow(dimLabel("Conseillée"), m_antennaInfo);
-    layout->addWidget(antenna);
 
     return panel;
 }
@@ -706,6 +1021,17 @@ void RBSWindow::closeEvent(QCloseEvent *event)
     });
 }
 
+void RBSWindow::updateStationDisplay()
+{
+    float latitude = MainCore::instance()->getSettings().getLatitude();
+    float longitude = MainCore::instance()->getSettings().getLongitude();
+    bool known = (latitude != 0.0f) || (longitude != 0.0f);
+    QString locator = known ? Maidenhead::toMaidenhead(latitude, longitude) : QString();
+
+    m_statusLocation->setText(known ? locator : QString("Position non définie (Ma station)"));
+    m_distanceReference->setText(known ? QString("Distances depuis %1").arg(locator) : QString("Distances : renseigne ton locator dans Ma station"));
+}
+
 // ---------------------------------------------------------------------------
 // Modes
 
@@ -736,32 +1062,19 @@ void RBSWindow::startMode(const QString& modeId)
     m_adsbTimer.stop();
     m_lastPacketSequence = 0;
 
-    m_modeCombo->blockSignals(true);
-    m_modeCombo->setCurrentIndex(m_modeCombo->findData(mode->m_id));
-    m_modeCombo->blockSignals(false);
-
-    for (int i = 0; i < m_modeList->count(); i++)
-    {
-        if (m_modeList->item(i)->data(Qt::UserRole).toString() == mode->m_id) {
-            m_modeList->setCurrentRow(i);
-        }
-    }
-
     showModeSettings(*mode);
     setupDecodeView(*mode);
+    loadListen(*mode);
     setWindowTitle(QString("RBS — %1").arg(mode->m_name));
     m_controller->startMode(*mode);
+    populateModeList();
     emit modeChanged(mode->m_id);
 }
 
 void RBSWindow::showModeSettings(const RBSMode& mode)
 {
     m_band->setText(mode.m_band.isEmpty() ? "—" : mode.m_band);
-    m_demod->setText(mode.m_demod);
-    m_decoder->setText(mode.m_channelType);
-    m_offset->setText(QString("%1 kHz").arg(mode.m_channelOffset / 1000.0, 0, 'f', 1));
-    m_antennaStatus->setText(QString("■ %1").arg(mode.m_antenna.isEmpty() ? "—" : mode.m_antenna));
-    m_antennaInfo->setText(mode.m_antenna.isEmpty() ? "—" : mode.m_antenna);
+    m_decoder->setText(QString("Décodeur %1 sur %2 MHz").arg(mode.m_channelType).arg(mode.tunedFrequency() / 1e6, 0, 'f', 3));
 
     m_updatingControls = true;
     m_frequency->setValue(mode.tunedFrequency());
@@ -772,28 +1085,29 @@ void RBSWindow::setupDecodeView(const RBSMode& mode)
 {
     m_messageCount = 0;
     m_callsToday.clear();
+    m_stationsByCountry.clear();
+    m_countryTreeDirty = true;
     m_farthestKm = 0.0;
     m_statsMessages->setText("0");
     m_statsCalls->setText("0");
+    m_statsCountries->setText("0");
     m_statsFarthest->setText("—");
 
+    // Call 2, the calling station, is the column that matters most: in bold
     if (mode.m_view == "ft8")
     {
         m_decodesTitle->setText("Décodages FT8");
-        m_highlightedOnly->setText("CQ seulement");
-        m_decodeModel->setColumns({"UTC", "dB", "DT", "Δf", "Message", "Locator", "Distance"});
+        m_decodeModel->setColumns({"UTC", "dB", "DT", "Δf", "Call 1", "Call 2", "Message", "Pays", "Locator", "Distance"}, 5);
     }
     else if (mode.m_view == "aprs")
     {
         m_decodesTitle->setText("Stations APRS");
-        m_highlightedOnly->setText("Nouvelles seulement");
-        m_decodeModel->setColumns({"Heure", "Indicatif", "Vers", "Via", "Position", "Distance", "Commentaire"});
+        m_decodeModel->setColumns({"Heure", "Indicatif", "Pays", "Vers", "Via", "Position", "Distance", "Commentaire"}, 1);
     }
     else if (mode.m_view == "adsb")
     {
         m_decodesTitle->setText("Avions ADS-B");
-        m_highlightedOnly->setText("Nouveaux seulement");
-        m_decodeModel->setColumns({"Vu", "Indicatif", "ICAO", "Altitude", "Cap", "Distance", "Infos"});
+        m_decodeModel->setColumns({"Vu", "Indicatif", "ICAO", "Altitude", "Cap", "Distance", "Infos"}, 1);
     }
     else
     {
@@ -801,7 +1115,15 @@ void RBSWindow::setupDecodeView(const RBSMode& mode)
         m_decodeModel->setColumns({"Heure", "Message"});
     }
 
+    bool countries = mode.m_view != "adsb";
+    m_groupByCountry->setVisible(countries);
+
+    if (!countries) {
+        m_groupByCountry->setChecked(false);
+    }
+
     m_tabs->setTabText(1, m_decodesTitle->text());
+    rebuildCountryTree();
 }
 
 void RBSWindow::onControllerState(RBSController::State state, const QString& message)
@@ -825,6 +1147,10 @@ void RBSWindow::onModeStarted(const RBSMode& mode)
     attachSpectrum();
     readDeviceSettings();
 
+    if (!m_listen.m_demod.isEmpty()) {
+        m_controller->setListen(m_listen);
+    }
+
     if (mode.m_view == "ft8") {
         m_ft8Log->start(m_controller->getDeviceSetIndex(), m_controller->getChannelIndex());
     } else if (mode.m_view == "adsb") {
@@ -834,14 +1160,40 @@ void RBSWindow::onModeStarted(const RBSMode& mode)
 
 void RBSWindow::readDeviceSettings()
 {
-    int value;
+    if (!m_controller->isSDRplay()) {
+        return;
+    }
+
+    int value, decim;
     m_updatingControls = true;
 
-    if (m_controller->getDeviceSetting("lnaIndex", value)) {
-        m_lna->setValue(value);
+    if (m_controller->getDeviceSetting("devSampleRate", value) && m_controller->getDeviceSetting("log2Decim", decim))
+    {
+        int index = m_sampleRate->findData(QVariant::fromValue(QPoint(value, decim)));
+
+        if (index < 0)
+        {
+            int baseband = value >> decim;
+            m_sampleRate->addItem(QString("%1 kHz").arg(baseband / 1e3, 0, 'g', 4), QVariant::fromValue(QPoint(value, decim)));
+            index = m_sampleRate->count() - 1;
+        }
+
+        m_sampleRate->setCurrentIndex(index);
     }
-    if (m_controller->getDeviceSetting("ifAGC", value)) {
+    if (m_controller->getDeviceSetting("lnaIndex", value))
+    {
+        m_lna->setValue(9 - value);
+        m_lnaText->setText(QString("%1 / 9").arg(9 - value));
+    }
+    if (m_controller->getDeviceSetting("ifGain", value))
+    {
+        m_ifGain->setValue(value + 59);
+        m_ifGainText->setText(QString("%1 dB").arg(value + 59));
+    }
+    if (m_controller->getDeviceSetting("ifAGC", value))
+    {
         m_ifAGC->setChecked(value != 0);
+        m_ifGain->setEnabled(value == 0);
     }
     if (m_controller->getDeviceSetting("amNotch", value)) {
         m_amNotch->setChecked(value != 0);
@@ -857,6 +1209,71 @@ void RBSWindow::readDeviceSettings()
     }
 
     m_updatingControls = false;
+}
+
+// ---------------------------------------------------------------------------
+// Listening (Radio section). Remembered per mode
+
+void RBSWindow::loadListen(const RBSMode& mode)
+{
+    QSettings settings;
+    settings.beginGroup(m_settingsGroup);
+    settings.beginGroup("listen_" + mode.m_id);
+    m_listen.m_demod = settings.value("demod", QString()).toString();
+    m_listen.m_bandwidth = settings.value("bandwidth", 0).toInt();
+    m_listen.m_squelch = settings.value("squelch", -40).toInt();
+    m_listen.m_volume = settings.value("volume", 50).toInt();
+    settings.endGroup();
+    settings.endGroup();
+    showListen();
+}
+
+void RBSWindow::saveListen()
+{
+    QSettings settings;
+    settings.beginGroup(m_settingsGroup);
+    settings.beginGroup("listen_" + m_controller->getMode().m_id);
+    settings.setValue("demod", m_listen.m_demod);
+    settings.setValue("bandwidth", m_listen.m_bandwidth);
+    settings.setValue("squelch", m_listen.m_squelch);
+    settings.setValue("volume", m_listen.m_volume);
+    settings.endGroup();
+    settings.endGroup();
+}
+
+void RBSWindow::showListen()
+{
+    m_updatingControls = true;
+    const QStringList demodNames = {"", "NFM", "AM", "WFM", "USB", "LSB", "CW"};
+    int id = std::max(0, (int) demodNames.indexOf(m_listen.m_demod));
+    m_demodGroup->button(id)->setChecked(true);
+
+    bool on = !m_listen.m_demod.isEmpty();
+    bool squelch = RBSController::hasSquelch(m_listen.m_demod);
+    m_bandwidth->setValue(m_listen.m_bandwidth > 0 ? m_listen.m_bandwidth : RBSController::defaultBandwidth(m_listen.m_demod));
+    m_bandwidth->setEnabled(on);
+    m_squelch->setValue(m_listen.m_squelch);
+    m_squelchText->setText(QString("%1 dB").arg(m_listen.m_squelch));
+    m_squelch->setEnabled(squelch);
+    m_squelch->setToolTip(squelch || !on ? "Seuil du squelch : en dessous, le son est coupé" : "Pas de squelch en BLU / CW dans SDRangel");
+    m_volume->setValue(m_listen.m_volume);
+    m_volumeText->setText(QString("%1 %").arg(m_listen.m_volume));
+    m_volume->setEnabled(on);
+    m_updatingControls = false;
+}
+
+void RBSWindow::onDemodChanged(const QString& demod)
+{
+    if (demod == m_listen.m_demod) {
+        return;
+    }
+
+    m_listen.m_demod = demod;
+    m_listen.m_bandwidth = RBSController::defaultBandwidth(demod);
+    showListen();
+    saveListen();
+    m_controller->setListen(m_listen);
+    addEvent(demod.isEmpty() ? QString("Écoute coupée") : QString("Écoute %1").arg(demod));
 }
 
 void RBSWindow::attachSpectrum()
@@ -886,8 +1303,7 @@ void RBSWindow::poll()
 {
     m_statusClock->setText(QDateTime::currentDateTimeUtc().toString("HH:mm:ss") + " UTC");
 
-    DeviceSet *deviceSet = m_controller->getDeviceSet();
-    bool hasRSP = deviceSet && deviceSet->m_deviceAPI && (deviceSet->m_deviceAPI->getHardwareId() == RBSController::m_hwType);
+    bool hasDevice = m_controller->hasDevice();
     bool running = m_controller->isDeviceRunning();
 
     m_play->blockSignals(true);
@@ -895,18 +1311,14 @@ void RBSWindow::poll()
     m_play->setText(running ? "■" : "▶");
     m_play->blockSignals(false);
 
-    if (!hasRSP) {
+    m_deviceStatus->setText(QString("■ %1").arg(m_device->currentText().section("  ·", 0, 0)));
+
+    if (!hasDevice) {
         m_deviceStatus->setStyleSheet(m_controller->getState() == RBSController::Error ? "color: #ef4444;" : "color: #7f8a98;");
-    } else {
-        m_deviceStatus->setStyleSheet(running ? "color: #3ecf7a;" : "color: #f2c94c;");
-    }
-
-    m_biasTeeStatus->setStyleSheet(m_biasTee->isChecked() ? "color: #f2c94c;" : "color: #7f8a98;");
-    m_antennaStatus->setStyleSheet(hasRSP ? "color: #3ecf7a;" : "color: #7f8a98;");
-
-    if (!hasRSP) {
         return;
     }
+
+    m_deviceStatus->setStyleSheet(running ? "color: #3ecf7a;" : "color: #f2c94c;");
 
     if (running) {
         attachSpectrum(); // late start, or the device set was recreated
@@ -935,9 +1347,7 @@ void RBSWindow::poll()
         m_spectrumRate = rate;
         m_spectrum->setCenterFrequency(center);
         m_spectrum->setSampleRate(rate);
-        QString rateText = rate >= 1000000 ? QString("%1 MS/s").arg(rate / 1e6, 0, 'f', 3) : QString("%1 kS/s").arg(rate / 1e3, 0, 'f', 1);
-        m_sampleRate->setText(rateText);
-        m_statusRate->setText(rateText);
+        m_statusRate->setText(rate >= 1000000 ? QString("%1 MS/s").arg(rate / 1e6, 0, 'f', 3) : QString("%1 kS/s").arg(rate / 1e3, 0, 'f', 1));
     }
 
     // Channel level
@@ -993,6 +1403,114 @@ static QString formatKm(double km)
     return km < 0 ? QString() : QString("%1 km").arg(QLocale().toString(qRound(km)));
 }
 
+QString RBSWindow::countryOf(const QString& callsign)
+{
+    QString base = callsign.section('-', 0, 0).trimmed(); // APRS SSID
+
+    if (base.isEmpty() || base.startsWith("<")) {
+        return QString();
+    }
+
+    return Callsign::instance()->getCountryInfo(base).country;
+}
+
+void RBSWindow::addStation(const QString& call, const QString& message, int snr, double km)
+{
+    QString country = countryOf(call);
+
+    if (country.isEmpty()) {
+        country = "Inconnu";
+    }
+
+    bool newCountry = !m_stationsByCountry.contains(country);
+    Station& station = m_stationsByCountry[country][call];
+    station.m_lastHeard = QDateTime::currentDateTime();
+    station.m_lastMessage = message;
+    station.m_messages++;
+    station.m_bestSNR = std::max(station.m_bestSNR, snr);
+
+    if (km >= 0) {
+        station.m_km = km;
+    }
+
+    m_countryTreeDirty = true;
+    m_statsCountries->setText(QString::number(m_stationsByCountry.size()));
+
+    if (newCountry && (country != "Inconnu")) {
+        addEvent(QString("Nouveau pays : %1 (%2)").arg(country).arg(call));
+    }
+}
+
+void RBSWindow::rebuildCountryTree()
+{
+    if (!m_countryTreeDirty || !m_groupByCountry->isChecked()) {
+        return;
+    }
+
+    m_countryTreeDirty = false;
+    QString search = m_search->text().trimmed();
+
+    // Keep what the user opened
+    QSet<QString> expanded;
+
+    for (int i = 0; i < m_countryTree->topLevelItemCount(); i++)
+    {
+        QTreeWidgetItem *item = m_countryTree->topLevelItem(i);
+
+        if (item->isExpanded()) {
+            expanded.insert(item->data(0, Qt::UserRole).toString());
+        }
+    }
+
+    m_countryTree->setSortingEnabled(false);
+    m_countryTree->clear();
+    QFont bold = m_countryTree->font();
+    bold.setBold(true);
+
+    for (auto country = m_stationsByCountry.constBegin(); country != m_stationsByCountry.constEnd(); ++country)
+    {
+        QTreeWidgetItem *countryItem = new QTreeWidgetItem();
+        countryItem->setData(0, Qt::UserRole, country.key());
+        int messages = 0;
+        int best = -100;
+        double farthest = -1.0;
+
+        for (auto station = country.value().constBegin(); station != country.value().constEnd(); ++station)
+        {
+            if (!search.isEmpty() && !country.key().contains(search, Qt::CaseInsensitive) && !station.key().contains(search, Qt::CaseInsensitive)) {
+                continue;
+            }
+
+            QTreeWidgetItem *stationItem = new QTreeWidgetItem(countryItem);
+            stationItem->setText(0, station.key());
+            stationItem->setFont(0, bold);
+            stationItem->setData(1, Qt::DisplayRole, station.value().m_messages);
+            stationItem->setText(2, QString("%1  %2").arg(station.value().m_lastHeard.toString("HH:mm")).arg(station.value().m_lastMessage));
+            stationItem->setData(3, Qt::DisplayRole, station.value().m_bestSNR);
+            stationItem->setText(4, formatKm(station.value().m_km));
+            messages += station.value().m_messages;
+            best = std::max(best, station.value().m_bestSNR);
+            farthest = std::max(farthest, station.value().m_km);
+        }
+
+        if (countryItem->childCount() == 0)
+        {
+            delete countryItem;
+            continue;
+        }
+
+        countryItem->setText(0, QString("%1  (%2)").arg(country.key()).arg(countryItem->childCount()));
+        countryItem->setFont(0, bold);
+        countryItem->setData(1, Qt::DisplayRole, messages);
+        countryItem->setData(3, Qt::DisplayRole, best);
+        countryItem->setText(4, formatKm(farthest));
+        m_countryTree->addTopLevelItem(countryItem);
+        countryItem->setExpanded(expanded.contains(country.key()));
+    }
+
+    m_countryTree->setSortingEnabled(true);
+}
+
 void RBSWindow::onFT8Decode(const RBSFT8Log::Decode& decode)
 {
     QString myCall = MainCore::instance()->getSettings().getStationName().trimmed().toUpper();
@@ -1007,14 +1525,17 @@ void RBSWindow::onFT8Decode(const RBSFT8Log::Decode& decode)
 
     bool isLocator = (decode.m_loc.size() == 4) && (decode.m_loc != "RR73") && Maidenhead::isMaidenhead(decode.m_loc);
     double km = isLocator ? distanceKm(decode.m_loc) : -1.0;
-    QString message = QString("%1 %2 %3").arg(decode.m_call1).arg(decode.m_call2).arg(decode.m_loc).trimmed();
+    QString country = countryOf(decode.m_call2);
 
     m_decodeModel->addRow({
         decode.m_dateTime.toString("HH:mm:ss"),
         QString::number(decode.m_snr),
         QString::number(decode.m_dt, 'f', 1),
         QString::number(decode.m_df),
-        message,
+        decode.m_call1,
+        decode.m_call2,
+        decode.m_loc,
+        country,
         isLocator ? decode.m_loc : QString(),
         formatKm(km)
     }, kind);
@@ -1022,21 +1543,22 @@ void RBSWindow::onFT8Decode(const RBSFT8Log::Decode& decode)
     m_messageCount++;
     m_statsMessages->setText(QString::number(m_messageCount));
 
-    if (!decode.m_call2.startsWith("<"))
+    if (!decode.m_call2.isEmpty() && !decode.m_call2.startsWith("<"))
     {
         m_callsToday.insert(decode.m_call2);
         m_statsCalls->setText(QString::number(m_callsToday.size()));
+        addStation(decode.m_call2, QString("%1 %2").arg(decode.m_call1).arg(decode.m_loc), decode.m_snr, km);
     }
 
     if (km > m_farthestKm)
     {
         m_farthestKm = km;
-        m_statsFarthest->setText(QString("%1 · %2 (%3)").arg(decode.m_call2).arg(formatKm(km)).arg(decode.m_loc));
-        addEvent(QString("Plus loin : %1 à %2").arg(decode.m_call2).arg(formatKm(km)));
+        m_statsFarthest->setText(QString("%1 · %2 · %3").arg(decode.m_call2).arg(formatKm(km)).arg(country));
+        addEvent(QString("Plus loin : %1 à %2 (%3)").arg(decode.m_call2).arg(formatKm(km)).arg(country));
     }
 
     if (kind == RBSDecodeModel::Mine) {
-        addEvent(QString("Message pour toi : %1").arg(message));
+        addEvent(QString("Message pour toi : %1 %2 %3").arg(decode.m_call1).arg(decode.m_call2).arg(decode.m_loc));
     }
 }
 
@@ -1086,10 +1608,12 @@ void RBSWindow::onPackets()
 
         QDateTime time = QDateTime::fromString(packet.value("time").toString(), Qt::ISODateWithMs);
         bool isNew = !m_callsToday.contains(from);
+        QString country = countryOf(from);
 
         m_decodeModel->upsertRow(from, {
             time.toLocalTime().toString("HH:mm:ss"),
             from,
+            country,
             decoded.value("to").toString(),
             decoded.value("via").toString(),
             position,
@@ -1101,6 +1625,7 @@ void RBSWindow::onPackets()
         m_statsMessages->setText(QString::number(m_messageCount));
         m_callsToday.insert(from);
         m_statsCalls->setText(QString::number(m_callsToday.size()));
+        addStation(from, comment, 0, km);
 
         if (isNew) {
             addEvent(QString("Nouvelle station : %1").arg(from));

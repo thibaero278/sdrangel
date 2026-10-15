@@ -2,11 +2,10 @@
     "id": "ft8_20m",
     "order": 1,
     "name": "FT8 20 m",
-    "group": "Favoris",
+    "group": "HF numérique",
     "band": "20 m HF",
     "view": "ft8",
     "demod": "USB",
-    "antenna": "MLA-30+",
     "device": {
         "centerFrequency": 14060000,
         "devSampleRate": 2000000,

@@ -34,20 +34,31 @@
 
 #include "rbscontroller.h"
 
-const char* const RBSController::m_hwType = "SDRplayV3";
+const char* const RBSController::m_sdrplayHwType = "SDRplayV3";
 const char* const RBSController::m_channelTitle = "RBS";
+const char* const RBSController::m_listenTitle = "RBS écoute";
 
 RBSController::RBSController(WebAPIAdapterInterface *webAPIAdapterInterface, QObject *parent) :
     QObject(parent),
     m_webAPIAdapterInterface(webAPIAdapterInterface),
+    m_hwType(m_sdrplayHwType),
+    m_sequence(-1),
     m_state(Idle),
     m_stepStarted(false),
+    m_modeStartPending(false),
     m_deviceSet(nullptr),
     m_channelUID(0),
+    m_listenUID(0),
     m_deviceSetCountBefore(0)
 {
     m_pollTimer.setInterval(100);
     connect(&m_pollTimer, &QTimer::timeout, this, &RBSController::poll);
+}
+
+void RBSController::setDevice(const QString& hwType, int sequence)
+{
+    m_hwType = hwType;
+    m_sequence = sequence;
 }
 
 void RBSController::setState(State state, const QString& message)
@@ -61,6 +72,19 @@ void RBSController::addStep(const QString& label, std::function<bool(QString&)> 
 {
     m_steps.append(Step{label, action, done, timeoutMs, timeoutError});
 }
+
+void RBSController::runSteps()
+{
+    if (!m_pollTimer.isActive())
+    {
+        m_stepStarted = false;
+        m_pollTimer.start();
+        poll();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Device set and channels lookup
 
 DeviceSet *RBSController::getDeviceSet() const
 {
@@ -88,31 +112,17 @@ int RBSController::getDeviceSetIndex() const
     return -1;
 }
 
-ChannelAPI *RBSController::getChannel() const
+bool RBSController::hasDevice() const
 {
     DeviceSet *deviceSet = getDeviceSet();
-
-    if (!deviceSet || (m_channelUID == 0)) {
-        return nullptr;
-    }
-
-    for (int i = 0; i < deviceSet->getNumberOfChannels(); i++)
-    {
-        ChannelAPI *channel = deviceSet->getChannelAt(i);
-
-        if (channel && (channel->getUID() == m_channelUID)) {
-            return channel;
-        }
-    }
-
-    return nullptr;
+    return deviceSet && deviceSet->m_deviceAPI && (deviceSet->m_deviceAPI->getHardwareId() == m_hwType);
 }
 
-int RBSController::getChannelIndex() const
+int RBSController::channelIndex(uint64_t uid) const
 {
     DeviceSet *deviceSet = getDeviceSet();
 
-    if (!deviceSet || (m_channelUID == 0)) {
+    if (!deviceSet || (uid == 0)) {
         return -1;
     }
 
@@ -120,12 +130,33 @@ int RBSController::getChannelIndex() const
     {
         ChannelAPI *channel = deviceSet->getChannelAt(i);
 
-        if (channel && (channel->getUID() == m_channelUID)) {
+        if (channel && (channel->getUID() == uid)) {
             return i;
         }
     }
 
     return -1;
+}
+
+ChannelAPI *RBSController::channel(uint64_t uid) const
+{
+    int index = channelIndex(uid);
+    return index < 0 ? nullptr : getDeviceSet()->getChannelAt(index);
+}
+
+ChannelAPI *RBSController::getChannel() const
+{
+    return channel(m_channelUID);
+}
+
+int RBSController::getChannelIndex() const
+{
+    return channelIndex(m_channelUID);
+}
+
+int RBSController::getListenChannelIndex() const
+{
+    return channelIndex(m_listenUID);
 }
 
 QSet<uint64_t> RBSController::channelUIDs() const
@@ -146,7 +177,8 @@ QSet<uint64_t> RBSController::channelUIDs() const
     return uids;
 }
 
-// Channels RBS added, recognised by their title, in increasing index order
+// Channels RBS added, in this session or a previous one (they are saved with the configuration),
+// recognised by their title, in increasing index order
 QList<int> RBSController::rbsChannelIndexes() const
 {
     QList<int> indexes;
@@ -161,7 +193,7 @@ QList<int> RBSController::rbsChannelIndexes() const
     {
         QString title;
 
-        if (ChannelWebAPIUtils::getChannelSetting(deviceSetIndex, i, "title", title) && (title == m_channelTitle)) {
+        if (ChannelWebAPIUtils::getChannelSetting(deviceSetIndex, i, "title", title) && title.startsWith(m_channelTitle)) {
             indexes.append(i);
         }
     }
@@ -169,7 +201,7 @@ QList<int> RBSController::rbsChannelIndexes() const
     return indexes;
 }
 
-// The device set already used, else the first Rx one, preferring one that has the RSP1B
+// The device set already used, else the first Rx one, preferring one that has the chosen device
 DeviceSet *RBSController::findRxDeviceSet() const
 {
     if (DeviceSet *deviceSet = getDeviceSet()) {
@@ -194,7 +226,7 @@ DeviceSet *RBSController::findRxDeviceSet() const
     return firstRx;
 }
 
-bool RBSController::rspAvailable()
+bool RBSController::deviceAvailable() const
 {
     DeviceEnumerator *enumerator = DeviceEnumerator::instance();
 
@@ -208,11 +240,56 @@ bool RBSController::rspAvailable()
     return false;
 }
 
+QString RBSController::deviceName() const
+{
+    return isSDRplay() ? QString("RSP1B") : m_hwType;
+}
+
+// ---------------------------------------------------------------------------
+// Steps
+
+void RBSController::addChannelSteps(const QString& label, const QString& channelType, uint64_t *uid)
+{
+    addStep(label,
+        [this, channelType](QString& error) {
+            m_channelsBefore = channelUIDs();
+            SWGSDRangel::SWGChannelSettings query;
+            query.setDirection(0);
+            query.setChannelType(new QString(channelType));
+            SWGSDRangel::SWGSuccessResponse response;
+            SWGSDRangel::SWGErrorResponse errorResponse;
+            errorResponse.init();
+            int rc = m_webAPIAdapterInterface->devicesetChannelPost(getDeviceSetIndex(), query, response, errorResponse);
+
+            if (rc / 100 != 2)
+            {
+                error = QString("Impossible d'ajouter le canal %1 : %2").arg(channelType).arg(*errorResponse.getMessage());
+                return false;
+            }
+
+            return true;
+        },
+        [this, uid]() {
+            for (auto channelUID : channelUIDs())
+            {
+                if (!m_channelsBefore.contains(channelUID))
+                {
+                    *uid = channelUID;
+                    return true;
+                }
+            }
+
+            return false;
+        },
+        5000, QString("%1 : le canal n'a pas pu être ajouté").arg(label));
+}
+
 void RBSController::startMode(const RBSMode& mode)
 {
     m_pollTimer.stop();
     m_steps.clear();
     m_mode = mode;
+    m_modeStartPending = true;
     setState(Starting, QString("Lancement de %1…").arg(mode.m_name));
 
     // 1. An Rx device set
@@ -257,19 +334,19 @@ void RBSController::startMode(const RBSMode& mode)
         },
         5000, "Le récepteur n'a pas pu être créé");
 
-    // 2. The RSP1B on it
-    addStep("Ouverture du RSP1B",
+    // 2. The chosen device on it
+    addStep("Ouverture de l'appareil",
         [this](QString& error) {
-            DeviceSet *deviceSet = getDeviceSet();
-
-            if (deviceSet && (deviceSet->m_deviceAPI->getHardwareId() == m_hwType)) {
+            if (hasDevice()) {
                 return true;
             }
 
-            if (!rspAvailable())
+            if (!deviceAvailable())
             {
-                error = "RSP1B introuvable. Vérifie qu'il est branché et qu'il n'est pas attaché à WSL "
-                        "(usbipd detach), puis relance RBS.";
+                error = isSDRplay() ?
+                    QString("RSP1B introuvable. Vérifie qu'il est branché, qu'aucun autre logiciel ne l'utilise "
+                            "et qu'il n'est pas attaché à WSL (usbipd detach), puis relance RBS.") :
+                    QString("Source %1 introuvable").arg(m_hwType);
                 return false;
             }
 
@@ -278,7 +355,7 @@ void RBSController::startMode(const RBSMode& mode)
             SWGSDRangel::SWGDeviceListItem query;
             query.setDirection(0);
             query.setIndex(-1);
-            query.setSequence(-1);
+            query.setSequence(m_sequence);
             query.setDeviceStreamIndex(-1);
             query.setHwType(new QString(m_hwType));
             SWGSDRangel::SWGDeviceListItem response;
@@ -288,21 +365,19 @@ void RBSController::startMode(const RBSMode& mode)
 
             if (rc / 100 != 2)
             {
-                error = QString("Impossible d'ouvrir le RSP1B : %1").arg(*errorResponse.getMessage());
+                error = QString("Impossible d'ouvrir %1 : %2").arg(deviceName()).arg(*errorResponse.getMessage());
                 return false;
             }
 
             return true;
         },
         [this]() {
-            DeviceSet *deviceSet = getDeviceSet();
-            return deviceSet && (deviceSet->m_deviceAPI->getHardwareId() == m_hwType);
+            return hasDevice();
         },
-        8000, "Le RSP1B ne répond pas. Ferme les autres logiciels qui l'utilisent (SDR++, SDRuno, SatDump).");
+        8000, QString("%1 ne répond pas. Ferme les autres logiciels qui l'utilisent (SDR++, SDRuno, SatDump).").arg(deviceName()));
 
-    // 3. Remove the decoders RBS added before, in this session or a previous one (they are saved
-    // with the configuration): they carry the RBS title. The user's own channels are left alone.
-    addStep("Retrait du décodeur précédent",
+    // 3. Remove the channels RBS added before (decoder and listening)
+    addStep("Retrait des canaux précédents",
         [this](QString& error) {
             (void) error;
             int deviceSetIndex = getDeviceSetIndex();
@@ -323,15 +398,17 @@ void RBSController::startMode(const RBSMode& mode)
             if (rbsChannelIndexes().isEmpty())
             {
                 m_channelUID = 0;
+                m_listenUID = 0;
                 return true;
             }
 
             return false;
         },
-        5000, "Le décodeur précédent n'a pas pu être retiré");
+        5000, "Les canaux précédents n'ont pas pu être retirés");
 
-    // 4. Device settings of the mode
-    addStep("Réglage du RSP1B",
+    // 4. Device settings of the mode. They are written for the SDRplay; another source only gets
+    // the frequency
+    addStep("Réglage de l'appareil",
         [this](QString& error) {
             int deviceSetIndex = getDeviceSetIndex();
 
@@ -343,15 +420,9 @@ void RBSController::startMode(const RBSMode& mode)
 
             for (auto it = m_mode.m_device.constBegin(); it != m_mode.m_device.constEnd(); ++it)
             {
-                bool ok;
-
                 if (it.key() == "centerFrequency") {
-                    ok = ChannelWebAPIUtils::setCenterFrequency(deviceSetIndex, it.value().toDouble());
-                } else {
-                    ok = ChannelWebAPIUtils::patchDeviceSetting(deviceSetIndex, it.key(), it.value().toInt());
-                }
-
-                if (!ok) {
+                    ChannelWebAPIUtils::setCenterFrequency(deviceSetIndex, it.value().toDouble());
+                } else if (isSDRplay() && !ChannelWebAPIUtils::patchDeviceSetting(deviceSetIndex, it.key(), it.value().toInt())) {
                     qWarning("RBSController: could not set device setting %s", qPrintable(it.key()));
                 }
             }
@@ -359,57 +430,24 @@ void RBSController::startMode(const RBSMode& mode)
             return true;
         });
 
-    // 5. The decoder channel
-    addStep("Ajout du décodeur",
-        [this](QString& error) {
-            m_channelsBefore = channelUIDs();
-            SWGSDRangel::SWGChannelSettings query;
-            query.setDirection(0);
-            query.setChannelType(new QString(m_mode.m_channelType));
-            SWGSDRangel::SWGSuccessResponse response;
-            SWGSDRangel::SWGErrorResponse errorResponse;
-            errorResponse.init();
-            int rc = m_webAPIAdapterInterface->devicesetChannelPost(getDeviceSetIndex(), query, response, errorResponse);
-
-            if (rc / 100 != 2)
-            {
-                error = QString("Impossible d'ajouter le décodeur %1 : %2").arg(m_mode.m_channelType).arg(*errorResponse.getMessage());
-                return false;
-            }
-
-            return true;
-        },
-        [this]() {
-            for (auto uid : channelUIDs())
-            {
-                if (!m_channelsBefore.contains(uid))
-                {
-                    m_channelUID = uid;
-                    return true;
-                }
-            }
-
-            return false;
-        },
-        5000, "Le décodeur n'a pas pu être ajouté");
-
-    // 6. Its settings
+    // 5. The decoder channel and its settings
+    addChannelSteps("Ajout du décodeur", m_mode.m_channelType, &m_channelUID);
     addStep("Réglage du décodeur",
         [this](QString& error) {
-            ChannelAPI *channel = getChannel();
+            ChannelAPI *decoder = getChannel();
 
-            if (!channel)
+            if (!decoder)
             {
                 error = "Le décodeur a disparu";
                 return false;
             }
 
-            ChannelWebAPIUtils::patchChannelSetting(channel, "title", QString(m_channelTitle));
-            ChannelWebAPIUtils::patchChannelSetting(channel, "inputFrequencyOffset", m_mode.m_channelOffset);
+            ChannelWebAPIUtils::patchChannelSetting(decoder, "title", QString(m_channelTitle));
+            ChannelWebAPIUtils::patchChannelSetting(decoder, "inputFrequencyOffset", m_mode.m_channelOffset);
 
             for (auto it = m_mode.m_channelSettings.constBegin(); it != m_mode.m_channelSettings.constEnd(); ++it)
             {
-                if (!ChannelWebAPIUtils::patchChannelSetting(channel, it.key(), it.value().toVariant())) {
+                if (!ChannelWebAPIUtils::patchChannelSetting(decoder, it.key(), it.value().toVariant())) {
                     qWarning("RBSController: could not set channel setting %s", qPrintable(it.key()));
                 }
             }
@@ -417,7 +455,7 @@ void RBSController::startMode(const RBSMode& mode)
             return true;
         });
 
-    // 7. Run
+    // 6. Run
     addStep("Démarrage",
         [this](QString& error) {
             (void) error;
@@ -429,11 +467,145 @@ void RBSController::startMode(const RBSMode& mode)
         [this]() {
             return isDeviceRunning();
         },
-        20000, "Le RSP1B n'a pas démarré. Vérifie le service « SDRplay API Service », ou débranche et rebranche le RSP1B.");
+        20000, QString("%1 n'a pas démarré. Vérifie le service « SDRplay API Service », ou débranche et rebranche le RSP1B.").arg(deviceName()));
 
-    m_stepStarted = false;
-    m_pollTimer.start();
-    poll();
+    runSteps();
+}
+
+void RBSController::setListen(const Listen& listen)
+{
+    // Remove the current listening channel
+    addStep("Retrait de l'écoute",
+        [this](QString& error) {
+            (void) error;
+            int index = getListenChannelIndex();
+
+            if (index >= 0)
+            {
+                SWGSDRangel::SWGSuccessResponse response;
+                SWGSDRangel::SWGErrorResponse errorResponse;
+                errorResponse.init();
+                m_webAPIAdapterInterface->devicesetChannelDelete(getDeviceSetIndex(), index, response, errorResponse);
+            }
+
+            return true;
+        },
+        [this]() {
+            if (getListenChannelIndex() < 0)
+            {
+                m_listenUID = 0;
+                return true;
+            }
+
+            return false;
+        },
+        5000, "L'écoute précédente n'a pas pu être retirée");
+
+    QString channelType = listenChannelType(listen.m_demod);
+
+    if (channelType.isEmpty())
+    {
+        runSteps();
+        return;
+    }
+
+    addChannelSteps(QString("Écoute %1").arg(listen.m_demod), channelType, &m_listenUID);
+    addStep("Réglage de l'écoute",
+        [this, listen](QString& error) {
+            ChannelAPI *listenChannel = channel(m_listenUID);
+
+            if (!listenChannel)
+            {
+                error = "Le canal d'écoute a disparu";
+                return false;
+            }
+
+            ChannelWebAPIUtils::patchChannelSetting(listenChannel, "title", QString(m_listenTitle));
+            ChannelWebAPIUtils::patchChannelSetting(listenChannel, "inputFrequencyOffset", m_mode.m_channelOffset);
+            ChannelWebAPIUtils::patchChannelSetting(listenChannel, "audioMute", 0);
+            applyListenSettings(listen, true);
+            return true;
+        });
+
+    runSteps();
+}
+
+void RBSController::updateListen(const Listen& listen)
+{
+    if (channel(m_listenUID)) {
+        applyListenSettings(listen, false);
+    }
+}
+
+// Volume: 50 % is the demodulator's own default level
+void RBSController::applyListenSettings(const Listen& listen, bool all)
+{
+    ChannelAPI *listenChannel = channel(m_listenUID);
+
+    if (!listenChannel) {
+        return;
+    }
+
+    const QString& demod = listen.m_demod;
+    int bandwidth = listen.m_bandwidth > 0 ? listen.m_bandwidth : defaultBandwidth(demod);
+    double volumeScale = listen.m_volume / 50.0;
+
+    if ((demod == "USB") || (demod == "LSB") || (demod == "CW"))
+    {
+        // SSB demodulator: the passband is lowCutoff..rfBandwidth, negative for LSB
+        int lowCutoff = demod == "CW" ? 300 : 200;
+        int sign = demod == "LSB" ? -1 : 1;
+        int high = demod == "CW" ? lowCutoff + bandwidth : bandwidth;
+        ChannelWebAPIUtils::patchChannelSetting(listenChannel, "rfBandwidth", sign * high);
+        ChannelWebAPIUtils::patchChannelSetting(listenChannel, "lowCutoff", sign * lowCutoff);
+        ChannelWebAPIUtils::patchChannelSetting(listenChannel, "volume", 1.0 * volumeScale);
+
+        if (all) {
+            ChannelWebAPIUtils::patchChannelSetting(listenChannel, "agc", 1);
+        }
+    }
+    else
+    {
+        double defaultVolume = demod == "NFM" ? 1.0 : 2.0;
+        ChannelWebAPIUtils::patchChannelSetting(listenChannel, "rfBandwidth", bandwidth);
+        ChannelWebAPIUtils::patchChannelSetting(listenChannel, "squelch", (double) listen.m_squelch);
+        ChannelWebAPIUtils::patchChannelSetting(listenChannel, "volume", defaultVolume * volumeScale);
+    }
+}
+
+QString RBSController::listenChannelType(const QString& demod)
+{
+    if (demod == "NFM") {
+        return "NFMDemod";
+    } else if (demod == "AM") {
+        return "AMDemod";
+    } else if ((demod == "USB") || (demod == "LSB") || (demod == "CW")) {
+        return "SSBDemod";
+    } else if (demod == "WFM") {
+        return "WFMDemod";
+    }
+
+    return QString();
+}
+
+int RBSController::defaultBandwidth(const QString& demod)
+{
+    if (demod == "NFM") {
+        return 12500;
+    } else if (demod == "AM") {
+        return 8000;
+    } else if (demod == "WFM") {
+        return 150000;
+    } else if (demod == "CW") {
+        return 500;
+    }
+
+    return 2700; // USB, LSB
+}
+
+bool RBSController::hasSquelch(const QString& demod)
+{
+    return (demod == "NFM") || (demod == "AM") || (demod == "WFM");
 }
 
 void RBSController::poll()
@@ -451,6 +623,7 @@ void RBSController::poll()
             {
                 m_pollTimer.stop();
                 m_steps.clear();
+                m_modeStartPending = false;
                 setState(Error, error);
                 return;
             }
@@ -466,6 +639,7 @@ void RBSController::poll()
                 QString error = step.m_timeoutError.isEmpty() ? QString("%1 : délai dépassé").arg(step.m_label) : step.m_timeoutError;
                 m_pollTimer.stop();
                 m_steps.clear();
+                m_modeStartPending = false;
                 setState(Error, error);
             }
 
@@ -477,9 +651,17 @@ void RBSController::poll()
     }
 
     m_pollTimer.stop();
-    setState(Running, QString("%1 en cours").arg(m_mode.m_name));
-    emit modeStarted(m_mode);
+
+    if (m_modeStartPending)
+    {
+        m_modeStartPending = false;
+        setState(Running, QString("%1 en cours").arg(m_mode.m_name));
+        emit modeStarted(m_mode);
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Device
 
 void RBSController::startDevice()
 {

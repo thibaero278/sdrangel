@@ -2,11 +2,10 @@
     "id": "aprs",
     "order": 2,
     "name": "APRS",
-    "group": "Favoris",
+    "group": "VHF / UHF",
     "band": "2 m VHF",
     "view": "aprs",
     "demod": "FM",
-    "antenna": "Dipôle 2 m",
     "device": {
         "centerFrequency": 144700000,
         "devSampleRate": 2000000,
