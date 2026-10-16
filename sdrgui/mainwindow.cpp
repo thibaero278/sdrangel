@@ -117,6 +117,7 @@
 
 //#include "ui_mainwindow.h"
 #include <QtWidgets/QApplication>
+#include <QElapsedTimer>
 
 #include <string>
 #include <QDebug>
@@ -303,7 +304,16 @@ MainWindow::MainWindow(qtwebapp::LoggerWithFile *logger, const MainParser& parse
     // Load initial configuration
     InitFSM *fsm = new InitFSM(this, splash, !parser.getScratch() && !parser.getRemoteTCPSink(), !parser.getRemoteTCPSink());
     connect(fsm, &InitFSM::finished, fsm, &InitFSM::deleteLater);
-    connect(fsm, &InitFSM::finished, splash, &SDRangelSplash::deleteLater);
+    if (parser.getRemoteTCPSink())
+    {
+        connect(fsm, &InitFSM::finished, splash, &SDRangelSplash::deleteLater);
+    }
+    else
+    {
+        // RBS: the loading screen stays until the RBS window shows
+        m_rbsSplash = splash;
+        connect(fsm, &InitFSM::finished, this, &MainWindow::startRBS);
+    }
     connect(fsm, &InitFSM::finished, this, &MainWindow::startMCPServer);
     if (parser.getRemoteTCPSink()) {
         connect(fsm, &InitFSM::finished, this, &MainWindow::startRemoteTCPSink);
@@ -4110,6 +4120,69 @@ void MainWindow::showAllChannels(int deviceSetIndex)
 void MainWindow::startRemoteTCPSink()
 {
     RemoteTCPSinkStarter::start(m_parser);
+}
+
+// RBS: the RBS window is the application and SDRangel the engine behind it, so the SDRangel window
+// is kept hidden from the start (main.cpp). The RBS Launcher feature opens the RBS window: add it if
+// the configuration has none. Should the RBS window still not show, show the SDRangel window rather
+// than nothing.
+void MainWindow::startRBS()
+{
+    static const QString rbsURI = QStringLiteral("sdrangel.feature.rbslauncher");
+    int featureSetIndex = -1;
+    int featureIndex = -1;
+
+    if (!FeatureWebAPIUtils::getFeature(featureSetIndex, featureIndex, rbsURI) && !m_workspaces.empty())
+    {
+        PluginAPI::FeatureRegistrations *featureRegistrations = m_pluginManager->getFeatureRegistrations();
+
+        for (int i = 0; i < featureRegistrations->size(); i++)
+        {
+            if ((*featureRegistrations)[i].m_featureIdURI == rbsURI)
+            {
+                qDebug("MainWindow::startRBS: no RBS Launcher in the configuration, adding it");
+                featureAddClicked(m_workspaces[0], i);
+                break;
+            }
+        }
+    }
+
+    // Wait for the RBS window (a slow first start after an update can take several seconds),
+    // then let the loading screen go
+    QTimer *wait = new QTimer(this);
+    QElapsedTimer *elapsed = new QElapsedTimer();
+    elapsed->start();
+    connect(wait, &QTimer::timeout, this, [this, wait, elapsed]() {
+        bool rbsShown = false;
+
+        for (QWidget *widget : QApplication::topLevelWidgets())
+        {
+            if ((widget->objectName() == "RBSWindow") && widget->isVisible()) {
+                rbsShown = true;
+            }
+        }
+
+        if (!rbsShown && (elapsed->elapsed() < 20000)) {
+            return;
+        }
+
+        if (!rbsShown && !isVisible())
+        {
+            qWarning("MainWindow::startRBS: the RBS window did not open, showing SDRangel");
+            show();
+        }
+
+        if (m_rbsSplash) {
+            m_rbsSplash->deleteLater();
+        }
+
+        // Kept off while no window was visible (main.cpp), so that closing the splash does not quit
+        qApp->setQuitOnLastWindowClosed(true);
+        wait->stop();
+        wait->deleteLater();
+        delete elapsed;
+    });
+    wait->start(100);
 }
 
 void MainWindow::startMCPServer()

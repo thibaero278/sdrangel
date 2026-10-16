@@ -357,6 +357,7 @@ private:
 
     bool m_settingsSaved;               // Records if settings have already been saved in response to a QCloseEvent
     QPointer<LoadConfigurationFSM> m_configurationLoadFSM; // In-flight load started by loadConfiguration(), if any
+    QPointer<SDRangelSplash> m_rbsSplash; // RBS loading screen, kept until the RBS window shows
     const MainParser& m_parser;
 
 	void loadSettings();
@@ -482,6 +483,7 @@ private slots:
     void featureMove(FeatureGUI *gui, int wsIndexDestnation);
     void deviceStateChanged(DeviceAPI *deviceAPI);
     void openFeaturePresetsDialog(QPoint p, Workspace *workspace);
+    void startRBS();
     void startMCPServer();
     void showMCPServer();
     void mcpServerFeatureAdded(int featureSetIndex, Feature *feature);

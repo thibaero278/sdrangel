@@ -323,6 +323,15 @@ static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *lo
 
     w.show();
 
+    // RBS: only the RBS loading screen, then the RBS window, are seen. The SDRangel window is shown
+    // once for the OpenGL set up above, then hidden; MainWindow::startRBS shows it back should the
+    // RBS window not open. Until then, closing the loading screen must not quit the application.
+    if (!parser.getListDevices() && !parser.getRemoteTCPSink())
+    {
+        a.setQuitOnLastWindowClosed(false);
+        w.hide();
+    }
+
     if (parser.getListDevices())
     {
         // List available physical devices and exit
