@@ -22,5 +22,19 @@
         "type": "PacketDemod",
         "inputFrequencyOffset": 100000,
         "settings": {}
-    }
+    },
+    "spectrum": {
+        "fftSize": 4096,
+        "linesPerSecond": 12,
+        "max": -70,
+        "min": -125
+    },
+    "frequencies": [
+        { "band": "2 m VHF", "frequency": 144800000, "note": "Europe et Afrique", "standard": true },
+        { "band": "2 m VHF", "frequency": 144390000, "note": "Amérique du Nord" },
+        { "band": "2 m VHF", "frequency": 145175000, "note": "Australie" },
+        { "band": "2 m VHF", "frequency": 144575000, "note": "Nouvelle-Zélande" },
+        { "band": "Satellites", "frequency": 145825000, "note": "ISS et satellites amateurs", "standard": true },
+        { "band": "70 cm UHF", "frequency": 432500000, "note": "Europe, peu actif" }
+    ]
 }

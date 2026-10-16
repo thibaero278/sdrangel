@@ -4,5 +4,6 @@
     <file>modes/aprs.json</file>
     <file>modes/adsb.json</file>
     <file>images/rbs_logo_white.png</file>
+    <file>images/combo_arrow.png</file>
   </qresource>
 </RCC>

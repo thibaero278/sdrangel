@@ -301,8 +301,12 @@ void FT8DemodWorker::processBuffer(int16_t *buffer, QDateTime periodTS)
     qDebug("FT8DemodWorker::processBuffer: done: at %6.3f %d messages",
         m_baseFrequency / 1000000.0, (int)ft8Callback.getReportMessage()->getFT8Messages().size());
 
-    if (m_guiReportingMessageQueue) {
-        m_guiReportingMessageQueue->push(new MsgReportFT8Messages(*ft8Callback.getReportMessage()));
+    {
+        QMutexLocker locker(&m_guiReportingMutex);
+
+        if (m_guiReportingMessageQueue) {
+            m_guiReportingMessageQueue->push(new MsgReportFT8Messages(*ft8Callback.getReportMessage()));
+        }
     }
 
     if (m_enablePskReporter && m_pskReportingMessageQueue) {

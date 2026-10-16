@@ -9,7 +9,7 @@ adds the decoder channel, starts the device and shows the spectrum, the waterfal
 <h2>Layouts</h2>
 
 - **Tout-en-un**: as SDR++, a fixed width menu on the left (controls and info), the spectrum and waterfall taking
-  all the rest of the window, and the decodes under them at a fixed height.
+  all the rest of the window, and the decodes under them. Drag the line between them to share the height.
 - **Onglets**: as the SDRangel workspaces, one tab per panel (spectrum and waterfall, decodes, controls, info),
   each one using the whole window.
 
@@ -39,6 +39,21 @@ modes folder (button "Ouvrir le dossier des fiches de modes") add modes, or repl
 
 `device` holds SDRplayV3 device settings and `channel` the SDRangel channel type with its settings. `view` selects the
 decode table: `ft8`, `aprs` or `adsb`.
+
+Optional keys:
+
+    "spectrum": { "fftSize": 8192, "linesPerSecond": 6, "max": -90, "min": -130 },
+    "frequencies": [
+        { "band": "40 m HF", "frequency": 7074000, "note": "jour et nuit", "standard": true },
+        { "band": "20 m HF", "frequency": 14074000, "note": "monde entier", "standard": true }
+    ]
+
+`spectrum` gives the default resolution (up to 8192: wider waterfalls stay black on many graphics chips), waterfall
+speed and scale of the mode; changes made in RBS are remembered per mode. `frequencies` fills the "Bande" selector of
+the top bar: bands on the left, their frequencies on the right. The frequency chosen last is used the next time the
+mode starts.
+
+RBS keeps its own settings apart from SDRangel's (QSettings application "RBS"): SDRangel's save removes any other group.
 
 <h2>Decodes</h2>
 

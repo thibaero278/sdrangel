@@ -3,7 +3,7 @@
     "order": 3,
     "name": "ADS-B",
     "group": "Aviation",
-    "band": "1090 MHz",
+    "band": "Aviation",
     "view": "adsb",
     "demod": "PPM",
     "device": {
@@ -22,5 +22,14 @@
         "type": "ADSBDemod",
         "inputFrequencyOffset": 0,
         "settings": {}
-    }
+    },
+    "spectrum": {
+        "fftSize": 2048,
+        "linesPerSecond": 12,
+        "max": -40,
+        "min": -115
+    },
+    "frequencies": [
+        { "band": "Aviation", "frequency": 1090000000, "note": "monde entier", "standard": true }
+    ]
 }

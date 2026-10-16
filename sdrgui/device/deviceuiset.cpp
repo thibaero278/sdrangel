@@ -174,6 +174,7 @@ void DeviceUISet::freeChannels()
     for(int i = 0; i < m_channelInstanceRegistrations.count(); i++)
     {
         qDebug("DeviceUISet::freeChannels: destroying channel [%s]", qPrintable(m_channelInstanceRegistrations[i].m_channelAPI->getURI()));
+        m_channelInstanceRegistrations[i].m_channelAPI->setMessageQueueToGUI(nullptr);
         delete m_channelInstanceRegistrations[i].m_gui;
         delete m_channelInstanceRegistrations[i].m_channelAPI;
     }
@@ -189,6 +190,8 @@ void DeviceUISet::deleteChannel(int channelIndex)
         qDebug("DeviceUISet::deleteChannel: delete channel [%s] at %d",
                 qPrintable(m_channelInstanceRegistrations[channelIndex].m_channelAPI->getURI()),
                 channelIndex);
+        // The channel's threads (FT8 decoder...) can still be reporting: have them stop sending to the GUI before it goes
+        m_channelInstanceRegistrations[channelIndex].m_channelAPI->setMessageQueueToGUI(nullptr);
         delete m_channelInstanceRegistrations[channelIndex].m_gui;
         delete m_channelInstanceRegistrations[channelIndex].m_channelAPI;
         m_channelInstanceRegistrations.removeAt(channelIndex);

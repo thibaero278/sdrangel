@@ -163,7 +163,6 @@
     <file>LiberationSans-Regular.ttf</file>
     <file>Roboto-Medium.ttf</file>
     <file>rbs_icon.png</file>
-    <file>rbs_icon_small.png</file>
     <file>rbs_splash.png</file>
   </qresource>
 </RCC>

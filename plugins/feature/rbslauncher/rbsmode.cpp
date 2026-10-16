@@ -17,10 +17,12 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <cstdlib>
 
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QStandardPaths>
 
@@ -43,7 +45,52 @@ bool RBSMode::fromJson(const QJsonObject& json, RBSMode& mode)
     mode.m_channelOffset = channel.value("inputFrequencyOffset").toInt(0);
     mode.m_channelSettings = channel.value("settings").toObject();
 
+    const QJsonArray frequencies = json.value("frequencies").toArray();
+
+    for (const auto& value : frequencies)
+    {
+        QJsonObject object = value.toObject();
+        Frequency frequency;
+        frequency.m_band = object.value("band").toString(mode.m_band);
+        frequency.m_frequency = (qint64) object.value("frequency").toDouble();
+        frequency.m_note = object.value("note").toString();
+        frequency.m_standard = object.value("standard").toBool(false);
+
+        if (frequency.m_frequency > 0) {
+            mode.m_frequencies.append(frequency);
+        }
+    }
+
+    QJsonObject spectrum = json.value("spectrum").toObject();
+    mode.m_fftSize = spectrum.value("fftSize").toInt(mode.m_fftSize);
+    mode.m_waterfallLinesPerSecond = spectrum.value("linesPerSecond").toInt(mode.m_waterfallLinesPerSecond);
+    mode.m_maxLevel = spectrum.value("max").toInt(mode.m_maxLevel);
+    mode.m_minLevel = spectrum.value("min").toInt(mode.m_minLevel);
+
     return !mode.m_id.isEmpty() && !mode.m_channelType.isEmpty() && mode.m_device.contains("centerFrequency");
+}
+
+QString RBSMode::bandOf(qint64 frequency) const
+{
+    const Frequency *closest = nullptr;
+
+    for (const auto& known : m_frequencies)
+    {
+        if ((std::abs(known.m_frequency - frequency) <= 150000)
+            && (!closest || (std::abs(known.m_frequency - frequency) < std::abs(closest->m_frequency - frequency)))) {
+            closest = &known;
+        }
+    }
+
+    if (closest) {
+        return closest->m_band;
+    } else if (frequency < 30000000) {
+        return "HF";
+    } else if (frequency < 300000000) {
+        return "VHF";
+    } else {
+        return "UHF";
+    }
 }
 
 QString RBSMode::userModesPath()

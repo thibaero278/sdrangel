@@ -44,12 +44,15 @@
 #include <QProgressBar>
 #include <QRadioButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QTableView>
 #include <QToolBar>
@@ -63,6 +66,7 @@
 #include "device/deviceenumerator.h"
 #include "device/deviceset.h"
 #include "device/deviceuiset.h"
+#include "dsp/spectrumvis.h"
 #include "gui/glspectrum.h"
 #include "util/callsign.h"
 #include "util/maidenhead.h"
@@ -70,14 +74,21 @@
 #include "mainwindow.h"
 
 #include "mcpdatafeed.h"
+#include "rbsbandpopup.h"
+#include "rbsdelegates.h"
 #include "rbsfrequencydial.h"
 #include "rbssection.h"
 #include "rbsspectrumtee.h"
 #include "rbswindow.h"
 
+// RBS settings live apart from SDRangel's: MainSettings::save() removes every group but its own
+static const char* const m_settingsApplication = "RBS";
 static const char* const m_settingsGroup = "RBSLauncher";
 static constexpr int m_sidebarWidth = 310;      //!< Fixed, as the SDR++ menu
-static constexpr int m_decodesHeight = 250;     //!< Fixed in the all in one layout
+static constexpr int m_decodesHeight = 250;     //!< At first in the all in one layout, then as the user drags it
+// The waterfall is a texture one pixel per FFT bin wide: above 8192 it passes the 16384 limit of
+// many graphics chips (Intel) and stays black
+static constexpr int m_log2FFTSizeMax = 13;
 
 // Sample rates offered for the SDRplay: device rate and decimation
 struct SampleRate { int m_devSampleRate; int m_log2Decim; };
@@ -102,9 +113,18 @@ QTabBar::tab:selected { color: #ffffff; background: #0b0d10; border-bottom: 2px 
 QTabBar::tab:hover { color: #dfe4ea; }
 QTableView, QTreeWidget { background: #08090b; alternate-background-color: #0c0e11; gridline-color: #15191e; border: none; selection-background-color: #1b3a66; selection-color: #ffffff; }
 QHeaderView::section { background: #111418; color: #7f8a98; border: none; border-bottom: 1px solid #252a31; padding: 3px 8px; }
-QLineEdit, QSpinBox, QComboBox { background: #08090b; border: 1px solid #252a31; border-radius: 0; padding: 2px 6px; color: #dfe4ea; min-height: 18px; }
-QComboBox::drop-down { border: none; width: 16px; }
-QComboBox QAbstractItemView { background: #111418; border: 1px solid #252a31; selection-background-color: #1b3a66; }
+QLineEdit, QSpinBox { background: #08090b; border: 1px solid #252a31; border-radius: 0; padding: 2px 6px; color: #dfe4ea; min-height: 18px; }
+QComboBox { combobox-popup: 0; background: #22272e; border: 1px solid #2f353d; border-radius: 3px; padding: 3px 8px; color: #dfe4ea; min-height: 18px; }
+QComboBox:hover, QComboBox:on { border-color: #3d8bff; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; border: none; width: 22px; }
+QComboBox::down-arrow { image: url(:/rbslauncher/images/combo_arrow.png); width: 10px; height: 6px; }
+QComboBox QAbstractItemView { background: #2a2f37; border: 1px solid #3a414b; outline: 0; padding: 2px 0; color: #dfe4ea; }
+QComboBox QAbstractItemView::item { min-height: 26px; padding: 0 10px; }
+QComboBox QAbstractItemView::item:hover { background: #343a44; }
+QComboBox QAbstractItemView::item:selected { background: #3d8bff; color: #ffffff; }
+QToolButton#rbsBandButton { border: none; background: transparent; padding: 0; text-align: left; }
+QToolButton#rbsBandButton:hover { color: #3d8bff; }
+QLabel#rbsNewCountry { color: #ef4444; }
 QToolButton { border: 1px solid #252a31; background: #181c22; padding: 3px 10px; border-radius: 0; color: #dfe4ea; }
 QToolButton:hover { border-color: #3d8bff; }
 QToolButton:checked { background: #3d8bff; border-color: #3d8bff; color: #ffffff; }
@@ -176,6 +196,8 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     m_updatingControls(false),
     m_spectrumCenter(-1),
     m_spectrumRate(-1),
+    m_displayFFTSize(4096),
+    m_displayLinesPerSecond(12),
     m_lastPacketSequence(0),
     m_countryTreeDirty(false),
     m_messageCount(0),
@@ -227,7 +249,18 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     connect(m_dataFeed, &MCPDataFeed::packetsChanged, this, &RBSWindow::onPackets, Qt::QueuedConnection);
     connect(&m_adsbTimer, &QTimer::timeout, this, &RBSWindow::refreshAircraft);
     m_countryTreeTimer.setInterval(1000);
-    connect(&m_countryTreeTimer, &QTimer::timeout, this, &RBSWindow::rebuildCountryTree);
+    connect(&m_countryTreeTimer, &QTimer::timeout, this, [this]() {
+        // Every 10 s, also let the "new" marks expire
+        static int ticks = 0;
+
+        if (++ticks % 10 == 0)
+        {
+            m_countryTreeDirty = true;
+            updateCountryBadge();
+        }
+
+        rebuildCountryTree();
+    });
     m_countryTreeTimer.start();
 
     m_listenUpdateTimer.setSingleShot(true);
@@ -241,8 +274,13 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
     populateDevices();
     populateModeList();
 
+    // Lists of the combo boxes drawn by the style sheet: grey, opening downwards
+    for (QComboBox *combo : findChildren<QComboBox*>()) {
+        combo->setItemDelegate(new QStyledItemDelegate(combo));
+    }
+
     // Layout and size used last; full screen the first time, as SDR++
-    QSettings settings;
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
     settings.beginGroup(m_settingsGroup);
     setLayoutMode(settings.value("layout", "allinone").toString() == "tabs" ? Tabs : AllInOne);
     QByteArray geometry = settings.value("geometry").toByteArray();
@@ -319,18 +357,28 @@ QWidget *RBSWindow::createTopBar()
     m_frequency->setRange(0, 2000000000LL);   // RSP1B: up to 2 GHz
     connect(m_frequency, &RBSFrequencyDial::changed, this, [this](qint64 value) {
         if (!m_updatingControls) {
-            m_controller->setTunedFrequency(value);
+            tuneTo(value);
         }
     });
     layout->addWidget(m_frequency);
     layout->addWidget(dimLabel("Hz", bar));
 
+    // Band: opens the known frequencies of the mode
     QVBoxLayout *bandBox = new QVBoxLayout();
     bandBox->setSpacing(0);
     bandBox->addWidget(dimLabel("Bande", bar));
-    m_band = new QLabel("—", bar);
-    bandBox->addWidget(m_band);
+    m_bandButton = new QToolButton(bar);
+    m_bandButton->setObjectName("rbsBandButton");
+    m_bandButton->setText("—  ▾");
+    m_bandButton->setCursor(Qt::PointingHandCursor);
+    m_bandButton->setToolTip("Choisir une fréquence connue du mode");
+    bandBox->addWidget(m_bandButton);
     layout->addLayout(bandBox);
+    m_bandPopup = new RBSBandPopup(this);
+    connect(m_bandButton, &QToolButton::clicked, this, [this]() {
+        m_bandPopup->showFor(m_bandButton, m_controller->getMode(), m_frequency->value());
+    });
+    connect(m_bandPopup, &RBSBandPopup::frequencyChosen, this, &RBSWindow::tuneTo);
 
     QVBoxLayout *levelBox = new QVBoxLayout();
     levelBox->setSpacing(2);
@@ -442,8 +490,14 @@ QWidget *RBSWindow::createControls()
     connect(m_device, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
         QString hwType = m_device->itemData(index, Qt::UserRole).toString();
         int sequence = m_device->itemData(index, Qt::UserRole + 1).toInt();
+
+        // Same source chosen again: nothing to do (and nothing to restart)
+        if ((hwType == m_controller->getHwType()) && m_controller->hasDevice()) {
+            return;
+        }
+
         m_controller->setDevice(hwType, sequence);
-        QSettings settings;
+        QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
         settings.beginGroup(m_settingsGroup);
         settings.setValue("deviceHwType", hwType);
         settings.setValue("deviceSequence", sequence);
@@ -555,6 +609,39 @@ QWidget *RBSWindow::createControls()
         }
     });
 
+    // --- Display: spectrum resolution and waterfall speed, remembered per mode
+    RBSSection *display = new RBSSection("Affichage", panel);
+    m_fftSize = new QComboBox();
+
+    for (int log2 = 10; log2 <= m_log2FFTSizeMax; log2++) {
+        m_fftSize->addItem(QString::number(1 << log2), 1 << log2);
+    }
+
+    m_fftSize->setToolTip("Finesse du spectre : plus fin = signaux étroits (FT8) visibles, mais plus lent à réagir");
+    display->form()->addRow(dimLabel("Résolution"), m_fftSize);
+    m_waterfallSpeed = new QSlider(Qt::Horizontal);
+    m_waterfallSpeed->setRange(1, 30);
+    m_waterfallSpeed->setToolTip("Lignes de cascade par seconde. Plus lent = signaux faibles plus visibles");
+    m_waterfallSpeedText = new QLabel();
+    display->form()->addRow(dimLabel("Vitesse cascade"), sliderRow(m_waterfallSpeed, m_waterfallSpeedText));
+    layout->addWidget(display);
+
+    connect(m_fftSize, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+        m_displayFFTSize = m_fftSize->itemData(index).toInt();
+        saveDisplay();
+        applySpectrumSettings();
+    });
+    connect(m_waterfallSpeed, &QSlider::valueChanged, this, [this](int value) {
+        m_waterfallSpeedText->setText(QString("%1 /s").arg(value));
+
+        if (!m_updatingControls)
+        {
+            m_displayLinesPerSecond = value;
+            saveDisplay();
+            applySpectrumSettings();
+        }
+    });
+
     // --- Modes: search and category
     RBSSection *modes = new RBSSection("Modes", panel);
     m_modeSearch = new QLineEdit();
@@ -627,7 +714,7 @@ QWidget *RBSWindow::createControls()
 
 void RBSWindow::populateDevices()
 {
-    QSettings settings;
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
     settings.beginGroup(m_settingsGroup);
     QString savedHwType = settings.value("deviceHwType", RBSController::m_sdrplayHwType).toString();
     int savedSequence = settings.value("deviceSequence", -1).toInt();
@@ -734,8 +821,7 @@ void RBSWindow::populateModeList()
             continue;
         }
 
-        QListWidgetItem *item = new QListWidgetItem(
-            QString("%1    %2 MHz").arg(mode.m_name).arg(mode.tunedFrequency() / 1e6, 0, 'f', 3), m_modeList);
+        QListWidgetItem *item = new QListWidgetItem(mode.m_name, m_modeList);
         item->setData(Qt::UserRole, mode.m_id);
         item->setToolTip(QString("%1 · %2").arg(mode.m_group).arg(mode.m_band));
 
@@ -774,6 +860,17 @@ QWidget *RBSWindow::createSpectrum()
     m_spectrum->setDecay(1);
     m_spectrum->setFPSPeriodMs(40);
     m_spectrum->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    // No measurements panel: its splitter handle only took height from the waterfall
+    if (QSplitter *measurements = m_spectrum->findChild<QSplitter*>())
+    {
+        if (measurements->count() > 1) {
+            measurements->widget(1)->hide();
+        }
+
+        measurements->setHandleWidth(0);
+    }
+
     layout->addWidget(m_spectrum, 1);
     m_spectrumTee = new RBSSpectrumTee(m_spectrum);
 
@@ -795,7 +892,7 @@ QWidget *RBSWindow::createSpectrum()
         slider->setCursor(Qt::SizeVerCursor);
         return slider;
     };
-    m_zoom = scaleSlider(1, 20, 1, "Zoom sur le centre du spectre");
+    m_zoom = scaleSlider(0, 60, 0, "Zoom autour de la fréquence du décodeur (jusqu'à x64)");
     m_refLevel = scaleSlider(-120, 20, -30, "Haut de l'échelle (dB)");
     m_range = scaleSlider(-160, -20, -110, "Bas de l'échelle (dB)");
     slidersLayout->addWidget(dimLabel("Zoom", sliders), 0, Qt::AlignHCenter);
@@ -806,16 +903,22 @@ QWidget *RBSWindow::createSpectrum()
     slidersLayout->addWidget(m_range, 1, Qt::AlignHCenter);
     layout->addWidget(sliders);
 
-    auto applyScale = [this]() {
-        int top = m_refLevel->value();
-        int bottom = std::min(m_range->value(), top - 10);
-        m_spectrum->setReferenceLevel((float) top);
-        m_spectrum->setPowerRange((float) (top - bottom));
+    // Scale remembered per mode
+    auto scaleChanged = [this]() {
+        if (!m_updatingControls)
+        {
+            applyScale();
+            saveDisplay();
+        }
     };
-    connect(m_refLevel, &QSlider::valueChanged, this, applyScale);
-    connect(m_range, &QSlider::valueChanged, this, applyScale);
-    connect(m_zoom, &QSlider::valueChanged, this, [this](int value) {
-        m_spectrum->setFrequencyZooming((float) value, 0.5f);
+    connect(m_refLevel, &QSlider::valueChanged, this, scaleChanged);
+    connect(m_range, &QSlider::valueChanged, this, scaleChanged);
+    connect(m_zoom, &QSlider::valueChanged, this, [this]() {
+        applyZoom();
+
+        if (!m_updatingControls) {
+            saveDisplay();
+        }
     });
 
     return panel;
@@ -841,6 +944,10 @@ QWidget *RBSWindow::createDecodes()
     m_search->setClearButtonEnabled(true);
     m_search->setMaximumWidth(300);
     m_groupByCountry = new QCheckBox("Regrouper par pays", tools);
+    m_newCountryBadge = new QLabel(tools);
+    m_newCountryBadge->setObjectName("rbsNewCountry");
+    m_newCountryBadge->setToolTip("Pays entendus pour la première fois : ouvre-les dans la vue par pays");
+    m_newCountryBadge->hide();
     m_distanceReference = dimLabel(QString(), tools);
     QToolButton *copy = new QToolButton(tools);
     copy->setText("Copier");
@@ -852,6 +959,7 @@ QWidget *RBSWindow::createDecodes()
     toolsLayout->addSpacing(10);
     toolsLayout->addWidget(m_search, 1);
     toolsLayout->addWidget(m_groupByCountry);
+    toolsLayout->addWidget(m_newCountryBadge);
     toolsLayout->addStretch(1);
     toolsLayout->addWidget(m_distanceReference);
     toolsLayout->addWidget(copy);
@@ -870,21 +978,49 @@ QWidget *RBSWindow::createDecodes()
     m_decodeTable->setShowGrid(false);
     m_decodeTable->setWordWrap(false);
     m_decodeTable->verticalHeader()->setVisible(false);
-    m_decodeTable->verticalHeader()->setDefaultSectionSize(20);
+    m_decodeTable->verticalHeader()->setDefaultSectionSize(22);
     m_decodeTable->horizontalHeader()->setStretchLastSection(true);
     m_decodeTable->horizontalHeader()->setHighlightSections(false);
     m_decodeTable->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_decodeTable->horizontalHeader()->setDefaultSectionSize(95);
 
+    // Call 1, call 2 and message as three tags of their own colour
+    m_call1Chip = new RBSChipDelegate(QColor("#1d2a3d"), QColor("#9ec3f5"), false, this);
+    m_call2Chip = new RBSChipDelegate(QColor("#2b3d5c"), QColor("#ffffff"), true, this);
+    m_messageChip = new RBSChipDelegate(QColor("#33291a"), QColor("#f2c94c"), false, this);
+
+    // Countries: one box per country, its stations under it
     m_countryTree = new QTreeWidget();
-    m_countryTree->setColumnCount(5);
-    m_countryTree->setHeaderLabels({"Pays / indicatif", "Messages", "Dernier message", "Meilleur dB", "Distance"});
-    m_countryTree->setRootIsDecorated(true);
-    m_countryTree->setUniformRowHeights(true);
-    m_countryTree->header()->setDefaultSectionSize(120);
-    m_countryTree->setColumnWidth(0, 220);
+    m_countryTree->setColumnCount(7);
+    m_countryTree->setHeaderLabels({"Pays / indicatif", "Messages", "Heure", "Call 1", "Message", "Meilleur dB", "Distance"});
+    m_countryTree->setRootIsDecorated(false);
+    m_countryTree->setIndentation(22);
+    m_countryTree->setExpandsOnDoubleClick(false);
+    m_countryTree->setMouseTracking(true);
+    m_countryTree->setItemDelegate(new RBSCountryDelegate(m_countryTree));
+    m_countryTree->setItemDelegateForColumn(3, m_call1Chip);
+    m_countryTree->setItemDelegateForColumn(4, m_messageChip);
+    m_countryTree->header()->setDefaultSectionSize(110);
+    m_countryTree->setColumnWidth(0, 200);
+    m_countryTree->setColumnWidth(2, 70);
+    m_countryTree->setColumnWidth(4, 130);
     m_countryTree->setSortingEnabled(true);
     m_countryTree->sortByColumn(1, Qt::DescendingOrder);
+    connect(m_countryTree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item) {
+        if (item->parent()) {
+            return;
+        }
+
+        item->setExpanded(!item->isExpanded());
+        QString country = item->data(0, RBSCountryDelegate::KeyRole).toString();
+
+        if (item->data(0, RBSCountryDelegate::NewRole).toBool())
+        {
+            m_seenCountries.insert(country);
+            item->setData(0, RBSCountryDelegate::NewRole, false);
+            updateCountryBadge();
+        }
+    });
 
     m_decodeViews = new QStackedWidget(panel);
     m_decodeViews->addWidget(m_decodeTable);
@@ -899,14 +1035,18 @@ QWidget *RBSWindow::createDecodes()
         m_decodeViews->setCurrentWidget(checked ? (QWidget*) m_countryTree : (QWidget*) m_decodeTable);
         m_countryTreeDirty = true;
         rebuildCountryTree();
+        updateCountryBadge();
     });
     connect(copy, &QToolButton::clicked, this, &RBSWindow::copySelection);
     connect(exportButton, &QToolButton::clicked, this, &RBSWindow::exportCSV);
     connect(clear, &QToolButton::clicked, this, [this]() {
         m_decodeModel->clear();
         m_stationsByCountry.clear();
+        m_countryFirstHeard.clear();
+        m_seenCountries.clear();
         m_countryTreeDirty = true;
         rebuildCountryTree();
+        updateCountryBadge();
     });
 
     return panel;
@@ -968,10 +1108,20 @@ void RBSWindow::createPages()
     sidebar->setObjectName("rbsSidebar");
     sidebar->setFixedWidth(m_sidebarWidth);
     allInOne->addWidget(sidebar);
-    QWidget *center = new QWidget(m_allInOnePage);
-    m_centerBox = noMargins(new QVBoxLayout(center));
-    allInOne->addWidget(center, 1);
+
+    // Spectrum over decodes: drag the line between them, what the waterfall gives the decodes get
+    m_centerSplitter = new QSplitter(Qt::Vertical, m_allInOnePage);
+    m_centerSplitter->setChildrenCollapsible(false);
+    m_centerSplitter->setHandleWidth(5);
+    m_centerSplitter->setStyleSheet("QSplitter::handle { background: #252a31; } QSplitter::handle:hover { background: #3d8bff; }");
+    allInOne->addWidget(m_centerSplitter, 1);
     m_pages->addWidget(m_allInOnePage);
+    connect(m_centerSplitter, &QSplitter::splitterMoved, this, [this]() {
+        QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
+        settings.beginGroup(m_settingsGroup);
+        settings.setValue("centerSplitter", m_centerSplitter->saveState());
+        settings.endGroup();
+    });
 
     // Tabs: each panel full window
     m_tabs = new QTabWidget(m_pages);
@@ -1001,16 +1151,27 @@ void RBSWindow::setLayoutMode(Layout layout)
         // Side menu: controls then info, above the stretch
         m_sidebarBox->insertWidget(0, m_controlsPanel);
         m_sidebarBox->insertWidget(1, m_infoPanel);
-        m_centerBox->addWidget(m_spectrumPanel, 1);
-        m_centerBox->addWidget(m_decodesPanel, 0);
-        m_decodesPanel->setFixedHeight(m_decodesHeight);
+        m_centerSplitter->insertWidget(0, m_spectrumPanel);
+        m_centerSplitter->insertWidget(1, m_decodesPanel);
+        m_centerSplitter->setStretchFactor(0, 1);
+        m_centerSplitter->setStretchFactor(1, 0);
+        m_spectrumPanel->setMinimumHeight(120);
+        m_decodesPanel->setMinimumHeight(90);
+
+        QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
+        settings.beginGroup(m_settingsGroup);
+        QByteArray state = settings.value("centerSplitter").toByteArray();
+        settings.endGroup();
+
+        if (state.isEmpty() || !m_centerSplitter->restoreState(state)) {
+            m_centerSplitter->setSizes({std::max(200, height() - m_decodesHeight), m_decodesHeight});
+        }
+
         m_pages->setCurrentWidget(m_allInOnePage);
     }
     else
     {
         m_tabSpectrumBox->addWidget(m_spectrumPanel, 1);
-        m_decodesPanel->setMinimumHeight(0);
-        m_decodesPanel->setMaximumHeight(QWIDGETSIZE_MAX);
         m_tabDecodesBox->addWidget(m_decodesPanel, 1);
         m_tabControlsBox->insertWidget(0, m_controlsPanel);
         m_tabInfoBox->insertWidget(0, m_infoPanel);
@@ -1022,7 +1183,7 @@ void RBSWindow::setLayoutMode(Layout layout)
     m_controlsPanel->show();
     m_infoPanel->show();
 
-    QSettings settings;
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
     settings.beginGroup(m_settingsGroup);
     settings.setValue("layout", layout == Tabs ? "tabs" : "allinone");
     settings.endGroup();
@@ -1030,7 +1191,7 @@ void RBSWindow::setLayoutMode(Layout layout)
 
 void RBSWindow::closeEvent(QCloseEvent *event)
 {
-    QSettings settings;
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
     settings.beginGroup(m_settingsGroup);
     settings.setValue("geometry", saveGeometry());
     settings.endGroup();
@@ -1083,33 +1244,172 @@ void RBSWindow::startMode(const QString& modeId)
 
     m_ft8Log->stop();
     m_adsbTimer.stop();
-    m_lastPacketSequence = 0;
 
-    showModeSettings(*mode);
-    setupDecodeView(*mode);
-    loadListen(*mode);
-    setWindowTitle(QString("RBS — %1").arg(mode->m_name));
-    m_controller->startMode(*mode);
+    // The frequency chosen last for this mode (band selector, dial) instead of the sheet's one
+    RBSMode started = *mode;
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
+    settings.beginGroup(m_settingsGroup);
+    qint64 tuned = settings.value("tuned_" + mode->m_id, 0).toLongLong();
+    settings.endGroup();
+
+    if (tuned > 0) {
+        started.m_device.insert("centerFrequency", (double) (tuned - started.m_channelOffset));
+    }
+
+    // Same mode again (source changed, mode clicked again): the decodes stay
+    if (started.m_id != m_viewModeId)
+    {
+        m_lastPacketSequence = 0;
+        setupDecodeView(started);
+    }
+
+    showModeSettings(started);
+    loadListen(started);
+    loadDisplay(started);
+    setWindowTitle(QString("RBS — %1").arg(started.m_name));
+    m_controller->startMode(started);
     populateModeList();
-    emit modeChanged(mode->m_id);
+    emit modeChanged(started.m_id);
 }
 
 void RBSWindow::showModeSettings(const RBSMode& mode)
 {
-    m_band->setText(mode.m_band.isEmpty() ? "—" : mode.m_band);
-    m_decoder->setText(QString("Décodeur %1 sur %2 MHz").arg(mode.m_channelType).arg(mode.tunedFrequency() / 1e6, 0, 'f', 3));
+    qint64 tuned = mode.tunedFrequency();
+    m_bandButton->setText(mode.bandOf(tuned) + "  ▾");
+    m_decoder->setText(QString("Décodeur %1 sur %2").arg(mode.m_name).arg(RBSBandPopup::formatMHz(tuned)));
 
     m_updatingControls = true;
-    m_frequency->setValue(mode.tunedFrequency());
+    m_frequency->setValue(tuned);
     m_updatingControls = false;
+}
+
+// Dial, band selector: the decoder goes there, and the mode will start there next time
+void RBSWindow::tuneTo(qint64 frequency)
+{
+    m_controller->setTunedFrequency(frequency);
+    const RBSMode& mode = m_controller->getMode();
+    m_bandButton->setText(mode.bandOf(frequency) + "  ▾");
+    m_decoder->setText(QString("Décodeur %1 sur %2").arg(mode.m_name).arg(RBSBandPopup::formatMHz(frequency)));
+
+    if (m_frequency->value() != frequency)
+    {
+        m_updatingControls = true;
+        m_frequency->setValue(frequency);
+        m_updatingControls = false;
+    }
+
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
+    settings.beginGroup(m_settingsGroup);
+    settings.setValue("tuned_" + mode.m_id, frequency);
+    settings.endGroup();
+}
+
+// ---------------------------------------------------------------------------
+// Spectrum display: resolution, waterfall speed and zoom
+
+void RBSWindow::loadDisplay(const RBSMode& mode)
+{
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
+    settings.beginGroup(m_settingsGroup);
+    settings.beginGroup("display_" + mode.m_id);
+    m_displayFFTSize = std::min(settings.value("fftSize", mode.m_fftSize).toInt(), 1 << m_log2FFTSizeMax);
+    m_displayLinesPerSecond = settings.value("linesPerSecond", mode.m_waterfallLinesPerSecond).toInt();
+    int maxLevel = settings.value("maxLevel", mode.m_maxLevel).toInt();
+    int minLevel = settings.value("minLevel", mode.m_minLevel).toInt();
+    int zoom = settings.value("zoom", 0).toInt();
+    settings.endGroup();
+    settings.endGroup();
+
+    m_updatingControls = true;
+    int index = m_fftSize->findData(m_displayFFTSize);
+    m_fftSize->setCurrentIndex(index < 0 ? m_fftSize->findData(4096) : index);
+    m_displayFFTSize = m_fftSize->currentData().toInt();
+    m_waterfallSpeed->setValue(m_displayLinesPerSecond);
+    m_waterfallSpeedText->setText(QString("%1 /s").arg(m_displayLinesPerSecond));
+    m_refLevel->setValue(maxLevel);
+    m_range->setValue(minLevel);
+    m_zoom->setValue(zoom);
+    m_updatingControls = false;
+    applyScale();
+}
+
+void RBSWindow::applyScale()
+{
+    int top = m_refLevel->value();
+    int bottom = std::min(m_range->value(), top - 10);
+    m_spectrum->setReferenceLevel((float) top);
+    m_spectrum->setPowerRange((float) (top - bottom));
+}
+
+void RBSWindow::saveDisplay()
+{
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
+    settings.beginGroup(m_settingsGroup);
+    settings.beginGroup("display_" + m_controller->getMode().m_id);
+    settings.setValue("fftSize", m_displayFFTSize);
+    settings.setValue("linesPerSecond", m_displayLinesPerSecond);
+    settings.setValue("maxLevel", m_refLevel->value());
+    settings.setValue("minLevel", m_range->value());
+    settings.setValue("zoom", m_zoom->value());
+    settings.endGroup();
+    settings.endGroup();
+}
+
+// The waterfall gets one line per spectrum: averaging N spectra gives sample rate / (FFT size x N)
+// lines per second, and weak signals stand out of the noise
+void RBSWindow::applySpectrumSettings()
+{
+    DeviceSet *deviceSet = m_controller->getDeviceSet();
+    int rate = m_controller->getSampleRate();
+
+    if (!deviceSet || !deviceSet->m_spectrumVis || (rate <= 0)) {
+        return;
+    }
+
+    SpectrumSettings settings = deviceSet->m_spectrumVis->getSettings();
+    double spectraPerSecond = (double) rate / m_displayFFTSize;
+    int average = std::max(1, (int) (spectraPerSecond / std::max(1, m_displayLinesPerSecond)));
+    settings.m_fftSize = m_displayFFTSize;
+    settings.m_fftOverlap = 0;
+    settings.m_averagingMode = average > 1 ? SpectrumSettings::AvgModeFixed : SpectrumSettings::AvgModeNone;
+    settings.m_averagingIndex = SpectrumSettings::getAveragingIndex(average, SpectrumSettings::AvgModeFixed);
+    settings.m_averagingValue = SpectrumSettings::getAveragingValue(settings.m_averagingIndex, SpectrumSettings::AvgModeFixed);
+    deviceSet->m_spectrumVis->getInputMessageQueue()->push(SpectrumVis::MsgConfigureSpectrumVis::create(settings, false));
+
+    // So that the waterfall time scale counts averaged spectra right
+    m_spectrum->setFFTOverlap(0);
+    m_spectrum->setTimingRate(average > 1 ? (qint32) settings.m_averagingValue : 1);
+}
+
+// Zoom around the decoder: FT8 is 14 kHz above the centre, a centre zoom would leave it out
+void RBSWindow::applyZoom()
+{
+    float zoom = std::pow(2.0f, m_zoom->value() / 10.0f);
+    float position = 0.5f;
+    int rate = m_controller->getSampleRate();
+
+    if (rate > 0) {
+        position += (float) m_controller->getMode().m_channelOffset / rate;
+    }
+
+    float limit = 0.5f / zoom;
+    position = std::max(limit, std::min(1.0f - limit, position));
+    m_spectrum->setFrequencyZooming(zoom, position);
 }
 
 void RBSWindow::setupDecodeView(const RBSMode& mode)
 {
+    m_viewModeId = mode.m_id;
     m_messageCount = 0;
     m_callsToday.clear();
     m_stationsByCountry.clear();
+    m_countryFirstHeard.clear();
+    m_seenCountries.clear();
     m_countryTreeDirty = true;
+
+    for (int column = 0; column < 12; column++) {
+        m_decodeTable->setItemDelegateForColumn(column, nullptr);
+    }
     m_farthestKm = 0.0;
     m_statsMessages->setText("0");
     m_statsCalls->setText("0");
@@ -1121,6 +1421,16 @@ void RBSWindow::setupDecodeView(const RBSMode& mode)
     {
         m_decodesTitle->setText("Décodages FT8");
         m_decodeModel->setColumns({"UTC", "dB", "DT", "Δf", "Call 1", "Call 2", "Message", "Pays", "Locator", "Distance"}, 5);
+        m_decodeTable->setItemDelegateForColumn(4, m_call1Chip);
+        m_decodeTable->setItemDelegateForColumn(5, m_call2Chip);
+        m_decodeTable->setItemDelegateForColumn(6, m_messageChip);
+        m_decodeTable->setColumnWidth(0, 80);
+        m_decodeTable->setColumnWidth(1, 50);
+        m_decodeTable->setColumnWidth(2, 50);
+        m_decodeTable->setColumnWidth(3, 60);
+        m_decodeTable->setColumnWidth(4, 110);
+        m_decodeTable->setColumnWidth(5, 110);
+        m_decodeTable->setColumnWidth(6, 100);
     }
     else if (mode.m_view == "aprs")
     {
@@ -1147,6 +1457,7 @@ void RBSWindow::setupDecodeView(const RBSMode& mode)
 
     m_tabs->setTabText(1, m_decodesTitle->text());
     rebuildCountryTree();
+    updateCountryBadge();
 }
 
 void RBSWindow::onControllerState(RBSController::State state, const QString& message)
@@ -1166,8 +1477,10 @@ void RBSWindow::onControllerState(RBSController::State state, const QString& mes
 
 void RBSWindow::onModeStarted(const RBSMode& mode)
 {
-    addEvent(QString("%1 lancé sur %2 MHz").arg(mode.m_name).arg(mode.tunedFrequency() / 1e6, 0, 'f', 3));
+    addEvent(QString("%1 lancé sur %2").arg(mode.m_name).arg(RBSBandPopup::formatMHz(mode.tunedFrequency())));
     attachSpectrum();
+    applySpectrumSettings();
+    applyZoom();
     readDeviceSettings();
 
     if (!m_listen.m_demod.isEmpty()) {
@@ -1239,7 +1552,7 @@ void RBSWindow::readDeviceSettings()
 
 void RBSWindow::loadListen(const RBSMode& mode)
 {
-    QSettings settings;
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
     settings.beginGroup(m_settingsGroup);
     settings.beginGroup("listen_" + mode.m_id);
     m_listen.m_demod = settings.value("demod", QString()).toString();
@@ -1253,7 +1566,7 @@ void RBSWindow::loadListen(const RBSMode& mode)
 
 void RBSWindow::saveListen()
 {
-    QSettings settings;
+    QSettings settings(QCoreApplication::organizationName(), m_settingsApplication);
     settings.beginGroup(m_settingsGroup);
     settings.beginGroup("listen_" + m_controller->getMode().m_id);
     settings.setValue("demod", m_listen.m_demod);
@@ -1357,6 +1670,9 @@ void RBSWindow::poll()
             m_updatingControls = true;
             m_frequency->setValue(tuned);
             m_updatingControls = false;
+            const RBSMode& mode = m_controller->getMode();
+            m_bandButton->setText(mode.bandOf(tuned) + "  ▾");
+            m_decoder->setText(QString("Décodeur %1 sur %2").arg(mode.m_name).arg(RBSBandPopup::formatMHz(tuned)));
         }
     }
 
@@ -1370,6 +1686,8 @@ void RBSWindow::poll()
         m_spectrumRate = rate;
         m_spectrum->setCenterFrequency(center);
         m_spectrum->setSampleRate(rate);
+        applySpectrumSettings();   // waterfall speed depends on the rate
+        applyZoom();
         m_statusRate->setText(rate >= 1000000 ? QString("%1 MS/s").arg(rate / 1e6, 0, 'f', 3) : QString("%1 kS/s").arg(rate / 1e3, 0, 'f', 1));
     }
 
@@ -1437,7 +1755,7 @@ QString RBSWindow::countryOf(const QString& callsign)
     return Callsign::instance()->getCountryInfo(base).country;
 }
 
-void RBSWindow::addStation(const QString& call, const QString& message, int snr, double km)
+void RBSWindow::addStation(const QString& call, const QString& call1, const QString& message, int snr, double km)
 {
     QString country = countryOf(call);
 
@@ -1446,8 +1764,14 @@ void RBSWindow::addStation(const QString& call, const QString& message, int snr,
     }
 
     bool newCountry = !m_stationsByCountry.contains(country);
+
+    if (newCountry) {
+        m_countryFirstHeard.insert(country, QDateTime::currentDateTime());
+    }
+
     Station& station = m_stationsByCountry[country][call];
     station.m_lastHeard = QDateTime::currentDateTime();
+    station.m_lastCall1 = call1;
     station.m_lastMessage = message;
     station.m_messages++;
     station.m_bestSNR = std::max(station.m_bestSNR, snr);
@@ -1462,6 +1786,34 @@ void RBSWindow::addStation(const QString& call, const QString& message, int snr,
     if (newCountry && (country != "Inconnu")) {
         addEvent(QString("Nouveau pays : %1 (%2)").arg(country).arg(call));
     }
+    if (newCountry) {
+        updateCountryBadge();
+    }
+}
+
+// A country is new for 5 minutes after it is first heard, or until the user opens it
+bool RBSWindow::isNewCountry(const QString& country) const
+{
+    if ((country == "Inconnu") || m_seenCountries.contains(country)) {
+        return false;
+    }
+
+    QDateTime firstHeard = m_countryFirstHeard.value(country);
+    return firstHeard.isValid() && (firstHeard.secsTo(QDateTime::currentDateTime()) < 5 * 60);
+}
+
+void RBSWindow::updateCountryBadge()
+{
+    int countries = m_stationsByCountry.size() - (m_stationsByCountry.contains("Inconnu") ? 1 : 0);
+    int newCountries = 0;
+
+    for (auto it = m_stationsByCountry.constBegin(); it != m_stationsByCountry.constEnd(); ++it) {
+        newCountries += isNewCountry(it.key()) ? 1 : 0;
+    }
+
+    m_groupByCountry->setText(countries > 0 ? QString("Regrouper par pays (%1)").arg(countries) : QString("Regrouper par pays"));
+    m_newCountryBadge->setText(QString("● %1 nouveau%2").arg(newCountries).arg(newCountries > 1 ? "x" : ""));
+    m_newCountryBadge->setVisible(newCountries > 0);
 }
 
 void RBSWindow::rebuildCountryTree()
@@ -1481,10 +1833,11 @@ void RBSWindow::rebuildCountryTree()
         QTreeWidgetItem *item = m_countryTree->topLevelItem(i);
 
         if (item->isExpanded()) {
-            expanded.insert(item->data(0, Qt::UserRole).toString());
+            expanded.insert(item->data(0, RBSCountryDelegate::KeyRole).toString());
         }
     }
 
+    int scroll = m_countryTree->verticalScrollBar()->value();
     m_countryTree->setSortingEnabled(false);
     m_countryTree->clear();
     QFont bold = m_countryTree->font();
@@ -1493,7 +1846,7 @@ void RBSWindow::rebuildCountryTree()
     for (auto country = m_stationsByCountry.constBegin(); country != m_stationsByCountry.constEnd(); ++country)
     {
         QTreeWidgetItem *countryItem = new QTreeWidgetItem();
-        countryItem->setData(0, Qt::UserRole, country.key());
+        countryItem->setData(0, RBSCountryDelegate::KeyRole, country.key());
         int messages = 0;
         int best = -100;
         double farthest = -1.0;
@@ -1508,9 +1861,11 @@ void RBSWindow::rebuildCountryTree()
             stationItem->setText(0, station.key());
             stationItem->setFont(0, bold);
             stationItem->setData(1, Qt::DisplayRole, station.value().m_messages);
-            stationItem->setText(2, QString("%1  %2").arg(station.value().m_lastHeard.toString("HH:mm")).arg(station.value().m_lastMessage));
-            stationItem->setData(3, Qt::DisplayRole, station.value().m_bestSNR);
-            stationItem->setText(4, formatKm(station.value().m_km));
+            stationItem->setText(2, station.value().m_lastHeard.toString("HH:mm"));
+            stationItem->setText(3, station.value().m_lastCall1);
+            stationItem->setText(4, station.value().m_lastMessage);
+            stationItem->setData(5, Qt::DisplayRole, station.value().m_bestSNR);
+            stationItem->setText(6, formatKm(station.value().m_km));
             messages += station.value().m_messages;
             best = std::max(best, station.value().m_bestSNR);
             farthest = std::max(farthest, station.value().m_km);
@@ -1522,16 +1877,27 @@ void RBSWindow::rebuildCountryTree()
             continue;
         }
 
-        countryItem->setText(0, QString("%1  (%2)").arg(country.key()).arg(countryItem->childCount()));
-        countryItem->setFont(0, bold);
+        // Drawn as a box by RBSCountryDelegate; the columns are kept for sorting
+        QStringList summary = {QString("%1 message%2").arg(messages).arg(messages > 1 ? "s" : ""), QString("meilleur %1 dB").arg(best)};
+
+        if (farthest >= 0) {
+            summary.append(formatKm(farthest));
+        }
+
+        countryItem->setText(0, country.key());
+        countryItem->setData(0, RBSCountryDelegate::StationsRole, countryItem->childCount());
+        countryItem->setData(0, RBSCountryDelegate::SummaryRole, summary.join("   ·   "));
+        countryItem->setData(0, RBSCountryDelegate::NewRole, isNewCountry(country.key()));
         countryItem->setData(1, Qt::DisplayRole, messages);
-        countryItem->setData(3, Qt::DisplayRole, best);
-        countryItem->setText(4, formatKm(farthest));
+        countryItem->setData(5, Qt::DisplayRole, best);
+        countryItem->setData(6, Qt::DisplayRole, farthest);
         m_countryTree->addTopLevelItem(countryItem);
+        countryItem->setFirstColumnSpanned(true);
         countryItem->setExpanded(expanded.contains(country.key()));
     }
 
     m_countryTree->setSortingEnabled(true);
+    m_countryTree->verticalScrollBar()->setValue(scroll);
 }
 
 void RBSWindow::onFT8Decode(const RBSFT8Log::Decode& decode)
@@ -1539,9 +1905,6 @@ void RBSWindow::onFT8Decode(const RBSFT8Log::Decode& decode)
     QString myCall = MainCore::instance()->getSettings().getStationName().trimmed().toUpper();
     RBSDecodeModel::Kind kind = RBSDecodeModel::Normal;
 
-    if (decode.m_call1.startsWith("CQ")) {
-        kind = RBSDecodeModel::Highlight;
-    }
     if (!myCall.isEmpty() && (decode.m_call1.toUpper() == myCall)) {
         kind = RBSDecodeModel::Mine;
     }
@@ -1570,7 +1933,7 @@ void RBSWindow::onFT8Decode(const RBSFT8Log::Decode& decode)
     {
         m_callsToday.insert(decode.m_call2);
         m_statsCalls->setText(QString::number(m_callsToday.size()));
-        addStation(decode.m_call2, QString("%1 %2").arg(decode.m_call1).arg(decode.m_loc), decode.m_snr, km);
+        addStation(decode.m_call2, decode.m_call1, decode.m_loc, decode.m_snr, km);
     }
 
     if (km > m_farthestKm)
@@ -1648,7 +2011,7 @@ void RBSWindow::onPackets()
         m_statsMessages->setText(QString::number(m_messageCount));
         m_callsToday.insert(from);
         m_statsCalls->setText(QString::number(m_callsToday.size()));
-        addStation(from, comment, 0, km);
+        addStation(from, decoded.value("to").toString(), comment, 0, km);
 
         if (isNew) {
             addEvent(QString("Nouvelle station : %1").arg(from));

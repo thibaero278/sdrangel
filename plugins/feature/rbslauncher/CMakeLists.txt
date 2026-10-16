@@ -31,6 +31,8 @@ if(NOT SERVER_MODE)
         rbssection.cpp
         rbsdecodemodel.cpp
         rbsfrequencydial.cpp
+        rbsbandpopup.cpp
+        rbsdelegates.cpp
         ${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver/mcpdatafeed.cpp
         rbslauncher.qrc
     )
@@ -45,6 +47,8 @@ if(NOT SERVER_MODE)
         rbssection.h
         rbsdecodemodel.h
         rbsfrequencydial.h
+        rbsbandpopup.h
+        rbsdelegates.h
         ${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver/mcpdatafeed.h
     )
     include_directories(${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver)

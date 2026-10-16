@@ -39,6 +39,7 @@ class QLineEdit;
 class QListWidget;
 class QProgressBar;
 class QSlider;
+class QSplitter;
 class QSpinBox;
 class QStackedWidget;
 class QTabWidget;
@@ -49,6 +50,8 @@ class QVBoxLayout;
 class QWidget;
 class GLSpectrum;
 class MCPDataFeed;
+class RBSBandPopup;
+class RBSChipDelegate;
 class RBSFrequencyDial;
 class RBSSpectrumTee;
 class WebAPIAdapterInterface;
@@ -84,6 +87,7 @@ private:
     struct Station
     {
         QDateTime m_lastHeard;
+        QString m_lastCall1;
         QString m_lastMessage;
         int m_messages = 0;
         int m_bestSNR = -100;
@@ -98,7 +102,8 @@ private:
     // Top bar
     QToolButton *m_play;
     RBSFrequencyDial *m_frequency;
-    QLabel *m_band;
+    QToolButton *m_bandButton;
+    RBSBandPopup *m_bandPopup;
     QProgressBar *m_level;
     QLabel *m_levelText;
     QLabel *m_deviceStatus;
@@ -114,7 +119,7 @@ private:
     QWidget *m_allInOnePage;
     QTabWidget *m_tabs;
     QVBoxLayout *m_sidebarBox;
-    QVBoxLayout *m_centerBox;
+    QSplitter *m_centerSplitter;   //!< Spectrum over decodes, in the all in one layout
     QVBoxLayout *m_tabSpectrumBox;
     QVBoxLayout *m_tabDecodesBox;
     QVBoxLayout *m_tabControlsBox;
@@ -162,6 +167,11 @@ private:
     QSlider *m_range;
     qint64 m_spectrumCenter;
     int m_spectrumRate;
+    QComboBox *m_fftSize;
+    QSlider *m_waterfallSpeed;
+    QLabel *m_waterfallSpeedText;
+    int m_displayFFTSize;          //!< Wanted spectrum resolution and waterfall speed, per mode
+    int m_displayLinesPerSecond;
 
     // Decodes
     QLabel *m_decodesTitle;
@@ -173,11 +183,18 @@ private:
     QTreeWidget *m_countryTree;
     QLineEdit *m_search;
     QCheckBox *m_groupByCountry;
+    QLabel *m_newCountryBadge;
+    RBSChipDelegate *m_call1Chip;
+    RBSChipDelegate *m_call2Chip;
+    RBSChipDelegate *m_messageChip;
+    QString m_viewModeId;          //!< Mode the decodes shown belong to
     RBSFT8Log *m_ft8Log;
     MCPDataFeed *m_dataFeed;
     qint64 m_lastPacketSequence;
     QHash<QString, QHash<QString, Station>> m_stationsByCountry;
     bool m_countryTreeDirty;
+    QHash<QString, QDateTime> m_countryFirstHeard;
+    QSet<QString> m_seenCountries; //!< New countries the user opened
     QTimer m_countryTreeTimer;
 
     // Info
@@ -215,13 +232,21 @@ private:
     void attachSpectrum();
     void addEvent(const QString& text);
     void updateStationDisplay();
+    void tuneTo(qint64 frequency);
+    void applyZoom();
+    void applyScale();
+    void loadDisplay(const RBSMode& mode);
+    void saveDisplay();
+    void applySpectrumSettings();
+    void updateCountryBadge();
+    bool isNewCountry(const QString& country) const;
 
     void loadListen(const RBSMode& mode);
     void saveListen();
     void showListen();
     void onDemodChanged(const QString& demod);
 
-    void addStation(const QString& call, const QString& message, int snr, double km);
+    void addStation(const QString& call, const QString& call1, const QString& message, int snr, double km);
     void rebuildCountryTree();
     static QString countryOf(const QString& callsign);
 

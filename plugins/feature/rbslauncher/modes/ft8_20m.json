@@ -1,7 +1,7 @@
 {
     "id": "ft8_20m",
     "order": 1,
-    "name": "FT8 20 m",
+    "name": "FT8",
     "group": "HF numérique",
     "band": "20 m HF",
     "view": "ft8",
@@ -24,5 +24,25 @@
         "settings": {
             "logMessages": 1
         }
-    }
+    },
+    "spectrum": {
+        "fftSize": 8192,
+        "linesPerSecond": 6,
+        "max": -90,
+        "min": -130
+    },
+    "frequencies": [
+        { "band": "160 m HF", "frequency": 1840000, "note": "la nuit, en hiver" },
+        { "band": "80 m HF", "frequency": 3573000, "note": "la nuit, Europe" },
+        { "band": "60 m HF", "frequency": 5357000, "note": "peu actif" },
+        { "band": "40 m HF", "frequency": 7074000, "note": "jour et nuit, très actif", "standard": true },
+        { "band": "30 m HF", "frequency": 10136000, "note": "jour et nuit" },
+        { "band": "20 m HF", "frequency": 14074000, "note": "le plus actif, monde entier", "standard": true },
+        { "band": "17 m HF", "frequency": 18100000, "note": "le jour" },
+        { "band": "15 m HF", "frequency": 21074000, "note": "le jour, DX" },
+        { "band": "12 m HF", "frequency": 24915000, "note": "le jour" },
+        { "band": "10 m HF", "frequency": 28074000, "note": "le jour, selon la propagation" },
+        { "band": "6 m VHF", "frequency": 50313000, "note": "sporadique E, en été", "standard": true },
+        { "band": "2 m VHF", "frequency": 144174000, "note": "local, tropo" }
+    ]
 }

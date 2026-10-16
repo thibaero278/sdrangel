@@ -181,10 +181,8 @@ MainWindow::MainWindow(qtwebapp::LoggerWithFile *logger, const MainParser& parse
     splash->showStatusMessage("starting...", Qt::white);
     splash->showStatusMessage("starting...", Qt::white);
 
-    // RBS icon: transparent "R" when shown small (title bar), full icon when large (taskbar, Alt+Tab)
-    QIcon rbsIcon;
-    rbsIcon.addFile(":/rbs_icon_small.png", QSize(32, 32));
-    rbsIcon.addFile(":/rbs_icon.png", QSize(256, 256));
+    // RBS icon ("icone app") at every size: title bar, taskbar, Alt+Tab
+    QIcon rbsIcon(":/rbs_icon.png");
     qApp->setWindowIcon(rbsIcon);
     setWindowIcon(rbsIcon);
 #ifndef ANDROID

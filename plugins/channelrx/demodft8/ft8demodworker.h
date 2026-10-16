@@ -20,6 +20,7 @@
 #ifndef INCLUDE_FT8DEMODWORKER_H
 #define INCLUDE_FT8DEMODWORKER_H
 
+#include <QMutex>
 #include <QObject>
 #include <QSet>
 
@@ -54,7 +55,12 @@ public:
     void setVerifyOSD(bool verifyOSD) { m_verifyOSD = verifyOSD; }
     void setLowFrequency(int lowFreq) { m_lowFreq = lowFreq; }
     void setHighFrequency(int highFreq) { m_highFreq = highFreq; }
-    void setGUIReportingMessageQueue(MessageQueue *messageQueue) { m_guiReportingMessageQueue = messageQueue; }
+    //! Called from the GUI thread, also with nullptr when the GUI goes while a period is being decoded
+    void setGUIReportingMessageQueue(MessageQueue *messageQueue)
+    {
+        QMutexLocker locker(&m_guiReportingMutex);
+        m_guiReportingMessageQueue = messageQueue;
+    }
     void setPSKReportingMessageQueue(MessageQueue *messageQueue) { m_pskReportingMessageQueue = messageQueue; }
     void invalidateSequence() { m_invalidSequence = true; }
     void setBaseFrequency(qint64 baseFrequency) { m_baseFrequency = baseFrequency; }
@@ -118,6 +124,7 @@ private:
     FT8::FT4Decoder m_ft4Decoder;
     FT8::Packing m_packing;
     MessageQueue *m_guiReportingMessageQueue;
+    QMutex m_guiReportingMutex;     //!< The GUI and its queue can be deleted while decoding
     MessageQueue *m_pskReportingMessageQueue;
     ChannelAPI *m_channel;
     QSet<QString> m_validCallsigns;

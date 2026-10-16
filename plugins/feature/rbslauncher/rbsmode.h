@@ -27,6 +27,15 @@
 // read from a JSON file ("fiche de mode")
 struct RBSMode
 {
+    // A known frequency for the mode, offered by the band selector
+    struct Frequency
+    {
+        QString m_band;           //!< Band it is listed under, e.g. "20 m HF"
+        qint64 m_frequency = 0;   //!< Tuned (decoder) frequency in Hz
+        QString m_note;           //!< e.g. "monde entier", "Europe"
+        bool m_standard = false;  //!< The usual one of the band
+    };
+
     QString m_id;
     int m_order = 100;        //!< Position in the mode list
     QString m_name;
@@ -39,9 +48,16 @@ struct RBSMode
     QString m_channelType;    //!< SDRangel channel id, e.g. "FT8Demod"
     int m_channelOffset = 0;  //!< Channel inputFrequencyOffset in Hz
     QJsonObject m_channelSettings;
+    QList<Frequency> m_frequencies;
+    int m_fftSize = 4096;                 //!< Spectrum resolution
+    int m_waterfallLinesPerSecond = 12;   //!< Waterfall speed
+    int m_maxLevel = -30;                 //!< Top of the spectrum scale, dB
+    int m_minLevel = -110;                //!< Bottom of the spectrum scale, dB (the noise should sit just above)
 
     qint64 centerFrequency() const { return (qint64) m_device.value("centerFrequency").toDouble(); }
     qint64 tunedFrequency() const { return centerFrequency() + m_channelOffset; }
+    //! Band of the known frequency closest to frequency (within 150 kHz), else HF / VHF / UHF
+    QString bandOf(qint64 frequency) const;
 
     static bool fromJson(const QJsonObject& json, RBSMode& mode);
 
