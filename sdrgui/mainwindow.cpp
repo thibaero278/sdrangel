@@ -173,14 +173,15 @@ MainWindow::MainWindow(qtwebapp::LoggerWithFile *logger, const MainParser& parse
     font.setPointSize(9);
     qApp->setFont(font);
 
-    QPixmap logoPixmap(":/sdrangel_logo.png");
+    // RBS loading screen (720 x 344), progress messages along the bottom
+    QPixmap logoPixmap(":/rbs_splash.png");
     auto *splash = new SDRangelSplash(logoPixmap);
-    splash->setMessageRect(QRect(10, 80, 350, 16));
+    splash->setMessageRect(QRect(12, 318, 696, 18));
     splash->show();
     splash->showStatusMessage("starting...", Qt::white);
     splash->showStatusMessage("starting...", Qt::white);
 
-    setWindowIcon(QIcon(":/sdrangel_icon.png"));
+    setWindowIcon(QIcon(":/rbs_icon.png"));
 #ifndef ANDROID
     // To save screen space on Android, don't have menu bar. Instead menus are accessed via toolbar button
     createMenuBar(nullptr);

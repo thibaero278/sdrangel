@@ -183,7 +183,7 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
 {
     setObjectName("RBSWindow");
     setWindowTitle("RBS");
-    setWindowIcon(QIcon(":/sdrangel_icon.png"));
+    setWindowIcon(QIcon(":/rbs_icon.png"));
     setStyleSheet(m_styleSheet);
 
     m_controller = new RBSController(webAPIAdapterInterface, this);
@@ -368,8 +368,12 @@ QWidget *RBSWindow::createTopBar()
     connect(m_layoutAllInOne, &QToolButton::clicked, this, [this]() { setLayoutMode(AllInOne); });
     connect(m_layoutTabs, &QToolButton::clicked, this, [this]() { setLayoutMode(Tabs); });
 
-    QLabel *logo = new QLabel("RBS", bar);   // Placeholder until the logo files are supplied
+    // Logo: the image is twice the displayed height, for high density screens
+    QLabel *logo = new QLabel(bar);
     logo->setObjectName("rbsLogo");
+    QPixmap logoPixmap(":/rbslauncher/images/rbs_logo_white.png");
+    logoPixmap.setDevicePixelRatio(2.0);
+    logo->setPixmap(logoPixmap);
     layout->addWidget(logo);
 
     return bar;
