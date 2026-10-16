@@ -181,7 +181,12 @@ MainWindow::MainWindow(qtwebapp::LoggerWithFile *logger, const MainParser& parse
     splash->showStatusMessage("starting...", Qt::white);
     splash->showStatusMessage("starting...", Qt::white);
 
-    setWindowIcon(QIcon(":/rbs_icon.png"));
+    // RBS icon: transparent "R" when shown small (title bar), full icon when large (taskbar, Alt+Tab)
+    QIcon rbsIcon;
+    rbsIcon.addFile(":/rbs_icon_small.png", QSize(32, 32));
+    rbsIcon.addFile(":/rbs_icon.png", QSize(256, 256));
+    qApp->setWindowIcon(rbsIcon);
+    setWindowIcon(rbsIcon);
 #ifndef ANDROID
     // To save screen space on Android, don't have menu bar. Instead menus are accessed via toolbar button
     createMenuBar(nullptr);

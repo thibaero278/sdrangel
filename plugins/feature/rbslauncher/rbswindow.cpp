@@ -183,7 +183,7 @@ RBSWindow::RBSWindow(WebAPIAdapterInterface *webAPIAdapterInterface, QWidget *pa
 {
     setObjectName("RBSWindow");
     setWindowTitle("RBS");
-    setWindowIcon(QIcon(":/rbs_icon.png"));
+    setWindowIcon(qApp->windowIcon());   // RBS icon, set by the main window
     setStyleSheet(m_styleSheet);
 
     m_controller = new RBSController(webAPIAdapterInterface, this);
@@ -640,9 +640,7 @@ void RBSWindow::populateDevices()
         {"FileInput", "Fichier IQ"},
         {"SigMFFileInput", "Fichier IQ SigMF"},
         {"RemoteTCPInput", "Réseau (rtl_tcp, RemoteTCP)"},
-        {"RemoteInput", "Réseau (SDRangel distant)"},
-        {"KiwiSDR", "KiwiSDR (web)"},
-        {"TestSource", "Source de test"}
+        {"KiwiSDR", "KiwiSDR (web)"}
     };
 
     DeviceEnumerator *enumerator = DeviceEnumerator::instance();
@@ -651,6 +649,13 @@ void RBSWindow::populateDevices()
     for (int i = 0; i < enumerator->getNbRxSamplingDevices(); i++)
     {
         const PluginInterface::SamplingDevice *device = enumerator->getRxSamplingDevice(i);
+
+        // Only the sources that make sense on their own: those named above, and real receivers
+        // found plugged in (they have a serial number). Not LocalInput, RemoteInput, TestSource...
+        if (!names.contains(device->hardwareId) && device->serial.isEmpty()) {
+            continue;
+        }
+
         QString name = names.value(device->hardwareId, device->displayedName);
 
         if (!device->serial.isEmpty() && (device->hardwareId == "SDRplayV3")) {
@@ -664,6 +669,20 @@ void RBSWindow::populateDevices()
 
         if ((device->hardwareId == savedHwType) && ((selected < 0) || (device->sequence == savedSequence))) {
             selected = row;
+        }
+    }
+
+    // A saved source that is no longer offered (LocalInput...): back to the RSP1B
+    if ((selected < 0) && !names.contains(savedHwType) && (savedHwType != RBSController::m_sdrplayHwType))
+    {
+        savedHwType = RBSController::m_sdrplayHwType;
+        savedSequence = -1;
+
+        for (int row = 0; row < m_device->count(); row++)
+        {
+            if (m_device->itemData(row, Qt::UserRole).toString() == savedHwType) {
+                selected = row;
+            }
         }
     }
 

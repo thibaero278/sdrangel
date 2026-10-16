@@ -334,7 +334,22 @@ void RBSController::startMode(const RBSMode& mode)
         },
         5000, "Le récepteur n'a pas pu être créé");
 
-    // 2. The chosen device on it
+    // 2. Before changing the device, stop the current one and give it a second: closing the
+    // SDRplay API while it is still starting can crash it
+    addStep("Arrêt de l'appareil précédent",
+        [this](QString& error) {
+            (void) error;
+            if (!hasDevice() && isDeviceRunning()) {
+                stopDevice();
+            }
+            return true;
+        },
+        [this]() {
+            return hasDevice() || (!isDeviceRunning() && (m_stepTimer.elapsed() > 1000));
+        },
+        10000, "L'appareil précédent ne s'arrête pas");
+
+    // 3. The chosen device on it
     addStep("Ouverture de l'appareil",
         [this](QString& error) {
             if (hasDevice()) {
@@ -376,7 +391,7 @@ void RBSController::startMode(const RBSMode& mode)
         },
         8000, QString("%1 ne répond pas. Ferme les autres logiciels qui l'utilisent (SDR++, SDRuno, SatDump).").arg(deviceName()));
 
-    // 3. Remove the channels RBS added before (decoder and listening)
+    // 4. Remove the channels RBS added before (decoder and listening)
     addStep("Retrait des canaux précédents",
         [this](QString& error) {
             (void) error;
@@ -406,7 +421,7 @@ void RBSController::startMode(const RBSMode& mode)
         },
         5000, "Les canaux précédents n'ont pas pu être retirés");
 
-    // 4. Device settings of the mode. They are written for the SDRplay; another source only gets
+    // 5. Device settings of the mode. They are written for the SDRplay; another source only gets
     // the frequency
     addStep("Réglage de l'appareil",
         [this](QString& error) {
@@ -430,7 +445,7 @@ void RBSController::startMode(const RBSMode& mode)
             return true;
         });
 
-    // 5. The decoder channel and its settings
+    // 6. The decoder channel and its settings
     addChannelSteps("Ajout du décodeur", m_mode.m_channelType, &m_channelUID);
     addStep("Réglage du décodeur",
         [this](QString& error) {
@@ -455,7 +470,7 @@ void RBSController::startMode(const RBSMode& mode)
             return true;
         });
 
-    // 6. Run
+    // 7. Run
     addStep("Démarrage",
         [this](QString& error) {
             (void) error;
