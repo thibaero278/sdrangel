@@ -1,0 +1,135 @@
+# Graphify : on n'indexe que RBS Launcher et le cœur SDRangel qu'il utilise.
+# Le reste du fork (≈ 17 700 fichiers, 135 000 nœuds) dépasse la limite Free de 25 000 nœuds.
+# Syntaxe .gitignore. Pour remettre un dossier dans le graphe, ajoute une ligne « !chemin/ ».
+
+# --- Fichiers non-code ---
+*.png
+*.bmp
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.svg
+*.xcf
+*.wav
+*.sdriq
+*.yaml
+*.ui
+*.qrc
+*.ts
+*.qm
+
+# --- Code généré / doc / packaging ---
+swagger/
+doc/
+android/
+debian/
+flatpak/
+snap/
+mac/
+custom/
+external/
+cmake/
+.github/
+.codacy/
+appbench/
+sdrbench/
+appsrv/
+sdrsrv/
+rescuesdriq/
+scriptsapi/
+exports/
+build/
+graphify-out/
+
+# --- Bibliothèques DSP non utilisées par RBS ---
+modemdvb/
+modemdrm/
+modemm17/
+modemmeshcore/
+modemmeshtastic/
+wdsp/
+qrtplib/
+fcdhid/
+fcdlib/
+devices/
+httpserver/
+logging/
+ft8/
+sdrgui/soapygui/
+# adaptateur Web API : énorme switch généré qui relie tout à tout
+sdrbase/webapi/
+# utilitaires sans rapport avec RBS (astronomie, formats de messages, etc.)
+sdrbase/util/astronomy*
+sdrbase/util/units*
+sdrbase/util/coordinates*
+sdrbase/util/png*
+sdrbase/util/ax25*
+sdrbase/util/ais*
+sdrbase/util/aviationweather*
+sdrbase/util/airlines*
+sdrbase/util/ourairports*
+sdrbase/util/openaip*
+sdrbase/util/sondehub*
+sdrbase/util/radiosonde*
+sdrbase/util/dsc*
+sdrbase/util/navtex*
+sdrbase/util/rtty*
+sdrbase/util/mmea*
+sdrbase/util/nmea*
+sdrbase/util/iot/
+sdrbase/util/visa*
+sdrbase/util/stepfunctions*
+
+# --- Docs : seules celles de RBS comptent ---
+*.md
+!plugins/feature/rbslauncher/*.md
+
+# --- Plugins : on exclut tout, puis on réintègre ceux que RBS pilote ---
+plugins/*
+!plugins/feature/
+plugins/feature/*
+!plugins/feature/rbslauncher/
+!plugins/feature/mcpserver/
+!plugins/feature/morsedecoder/
+!plugins/channelrx/
+plugins/channelrx/*
+!plugins/channelrx/demodadsb/
+!plugins/channelrx/demodpacket/
+!plugins/channelrx/demodssb/
+!plugins/channelrx/demodft8/
+!plugins/samplesource/
+plugins/samplesource/*
+!plugins/samplesource/sdrplayv3/
+
+# RBS ne crée ces canaux que par leur nom : leurs fenêtres SDRangel ne l'intéressent pas
+plugins/channelrx/*/*gui*
+plugins/channelrx/*/tests/
+plugins/feature/morsedecoder/*gui*
+plugins/samplesource/sdrplayv3/*gui*
+# du serveur MCP, RBS ne réutilise que le data feed
+plugins/feature/mcpserver/*
+!plugins/feature/mcpserver/mcpdatafeed.*
+
+# Cœur DSP/GUI : oscilloscope, émission, MIMO et enregistrement ne servent pas à RBS
+sdrbase/dsp/scope*
+sdrbase/dsp/glscope*
+sdrbase/dsp/interpolator*
+sdrbase/dsp/*mimo*
+sdrbase/dsp/*sink*
+sdrbase/dsp/wavfile*
+sdrbase/dsp/afsk*
+sdrbase/dsp/dvb*
+sdrbase/dsp/decimatorsu*
+sdrbase/dsp/decimatorsff*
+sdrbase/dsp/decimatorsfi*
+sdrgui/gui/glscope*
+sdrgui/gui/*mimo*
+sdrgui/gui/*sink*
+sdrgui/gui/connectionoverlay*
+sdrgui/gui/spectrummarkersdialog*
+sdrgui/gui/spectrummeasurements*
+
+# demodadsb embarque une énorme base (aéroports, compagnies) inutile pour le graphe
+plugins/channelrx/demodadsb/*.csv
+plugins/channelrx/demodadsb/map/
