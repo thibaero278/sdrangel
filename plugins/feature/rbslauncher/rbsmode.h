@@ -41,21 +41,35 @@ struct RBSMode
     QString m_name;
     QString m_group;
     QString m_band;
-    QString m_view;           //!< Decode view: "ft8", "aprs" or "adsb"
+    QString m_view;           //!< Decode view: "ft8", "aprs", "adsb" or "cw"
     QString m_demod;          //!< Label shown in the Radio section (USB, FM...)
+    QString m_listen;         //!< Listening demodulator used until the user picks one ("" = none)
     QString m_antenna;
+    QString m_description;    //!< What the mode is, for the decoder panel
+    QString m_tip;            //!< Practical advice, highlighted in the decoder panel
+    QString m_tag;            //!< Short tag shown in the mode list (IMAGE...), may be empty
     QJsonObject m_device;     //!< SDRplayV3 settings keys and values
     QString m_channelType;    //!< SDRangel channel id, e.g. "FT8Demod"
     int m_channelOffset = 0;  //!< Channel inputFrequencyOffset in Hz
     QJsonObject m_channelSettings;
+    QString m_featureType;    //!< SDRangel feature decoding the channel's audio, e.g. "MorseDecoder" ("" = none)
+    QString m_featureURI;     //!< Its URI, e.g. "sdrangel.feature.morsedecoder"
+    QJsonObject m_featureSettings;
     QList<Frequency> m_frequencies;
     int m_fftSize = 4096;                 //!< Spectrum resolution
     int m_waterfallLinesPerSecond = 12;   //!< Waterfall speed
     int m_maxLevel = -30;                 //!< Top of the spectrum scale, dB
     int m_minLevel = -110;                //!< Bottom of the spectrum scale, dB (the noise should sit just above)
+    // Decoder passband drawn on the spectrum, relative to the channel frequency
+    QString m_markerSideband;  //!< "usb", "lsb", "dsb" or "" (no marker)
+    int m_markerLow = 0;       //!< Low edge in Hz (usb / lsb)
+    int m_markerHigh = 0;      //!< High edge in Hz (usb / lsb), half width (dsb)
+    bool m_tunable = false;    //!< A click on the spectrum moves the decoder there
+    int m_tuneShift = 0;       //!< Shown frequency minus channel frequency: the CW tone pitch, so that the
+                               //!< frequency shown is the one of the signal, as on a CW transceiver
 
     qint64 centerFrequency() const { return (qint64) m_device.value("centerFrequency").toDouble(); }
-    qint64 tunedFrequency() const { return centerFrequency() + m_channelOffset; }
+    qint64 tunedFrequency() const { return centerFrequency() + m_channelOffset + m_tuneShift; }
     //! Band of the known frequency closest to frequency (within 150 kHz), else HF / VHF / UHF
     QString bandOf(qint64 frequency) const;
 

@@ -195,6 +195,7 @@ public:
     void setReferenceLevel(Real referenceLevel);
     void setReferenceLevelRange(Real minReferenceLevel, Real maxReferenceLevel);
     void setPowerRange(Real powerRange);
+    void setScale(Real referenceLevel, Real powerRange); //!< Both at once: one redraw of the waterfall
     void setPowerRangeRange(Real minPowerRange, Real maxPowerRange);
     void setDecay(int decay);
     void setDecayDivisor(int decayDivisor);
@@ -208,6 +209,9 @@ public:
     void setSsbSpectrum(bool ssbSpectrum);
     void setLsbDisplay(bool lsbDisplay);
     void setInvertedWaterfall(bool inv);
+    //! Spectrum over the waterfall with no gap, frequencies under the waterfall, no time scale,
+    //! a finer grid (as SDR++ or the MultiPSK Deck). Only with the spectrum over the waterfall
+    void setCompactLayout(bool compact);
     void setDisplayMaxHold(bool display);
     void setDisplayCurrent(bool display);
     void setDisplayHistogram(bool display);
@@ -349,6 +353,7 @@ private:
     int m_displayGridIntensity;
     int m_displayTraceIntensity;
     bool m_invertedWaterfall;
+    bool m_compactLayout;
 
     std::vector<Real> m_maxHold;
     bool m_displayMaxHold;
@@ -507,6 +512,7 @@ private:
     };
 
     CircularBuffer<Spectrum> m_spectrumBuffer;
+    std::vector<Real> m_alignedSpectrum; //!< Buffered line moved to the displayed frequencies, see alignedSpectrum()
     int m_spectrumBufferFFTSize;
     int m_spectrumBufferMaxSize;
     QScrollBar* m_scrollBar;
@@ -614,6 +620,7 @@ private:
     void setTimeScaleRange();
     void redrawSpectrum();
     void redrawWaterfallAnd3DSpectrogram();
+    const Real *alignedSpectrum(const Spectrum& spectrum);
     void paintLeftScales();
     void paintStatusLineRight();
     void updateScrollBar();

@@ -34,6 +34,7 @@
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -42,7 +43,10 @@ class QSlider;
 class QSplitter;
 class QSpinBox;
 class QStackedWidget;
+class QTabBar;
 class QTabWidget;
+class QTextEdit;
+class ChannelMarker;
 class QTableView;
 class QToolButton;
 class QTreeWidget;
@@ -51,8 +55,12 @@ class QWidget;
 class GLSpectrum;
 class MCPDataFeed;
 class RBSBandPopup;
+class RBSCWTap;
+class RBSModePopup;
 class RBSChipDelegate;
 class RBSFrequencyDial;
+class RBSMeters;
+class RBSSection;
 class RBSSpectrumTee;
 class WebAPIAdapterInterface;
 
@@ -101,11 +109,13 @@ private:
 
     // Top bar
     QToolButton *m_play;
+    QWidget *m_frequencyBox;       //!< Dial and its unit, hidden with a sound card (no frequency)
     RBSFrequencyDial *m_frequency;
+    QWidget *m_bandBox;
     QToolButton *m_bandButton;
     RBSBandPopup *m_bandPopup;
-    QProgressBar *m_level;
-    QLabel *m_levelText;
+    RBSMeters *m_meters;
+    double m_snrAverage;           //!< Smoothed S/N shown, < -50 when unknown
     QLabel *m_deviceStatus;
     QToolButton *m_layoutAllInOne;
     QToolButton *m_layoutTabs;
@@ -151,9 +161,8 @@ private:
     QTimer m_listenUpdateTimer;
 
     // Modes
-    QLineEdit *m_modeSearch;
-    QComboBox *m_modeCategory;
-    QListWidget *m_modeList;
+    QToolButton *m_modeButton;     //!< Top bar: the mode, opens the mode selector
+    RBSModePopup *m_modePopup;
 
     // My station
     QLineEdit *m_callsign;
@@ -162,16 +171,27 @@ private:
     // Spectrum
     GLSpectrum *m_spectrum;
     RBSSpectrumTee *m_spectrumTee;
-    QSlider *m_zoom;
-    QSlider *m_refLevel;
-    QSlider *m_range;
+    ChannelMarker *m_marker;       //!< Decoder passband on the spectrum; a click moves it when the mode is tunable
+    QSlider *m_zoom;               //!< 0..600: x2^(v/100)
+    QLabel *m_zoomText;
+    QSlider *m_brightness;         //!< Half dB: the bottom of the scale goes down by value / 2 dB
+    QLabel *m_brightnessText;
+    QSlider *m_contrast;           //!< %: 100 - 0.8 x value dB from black to white
+    QLabel *m_contrastText;
+    QCheckBox *m_autoLevel;        //!< The bottom of the scale follows the noise floor
+    QComboBox *m_colors;
+    QTimer m_scaleTimer;           //!< Groups the waterfall redraws while a slider moves
+    QTimer m_zoomTimer;
+    double m_scaleFloor;           //!< Bottom of the scale before brightness, dB (noise floor in auto)
     qint64 m_spectrumCenter;
     int m_spectrumRate;
-    QComboBox *m_fftSize;
     QSlider *m_waterfallSpeed;
     QLabel *m_waterfallSpeedText;
-    int m_displayFFTSize;          //!< Wanted spectrum resolution and waterfall speed, per mode
-    int m_displayLinesPerSecond;
+    QSlider *m_smoothing;
+    QLabel *m_smoothingText;
+    int m_displayFFTSize;          //!< Spectrum resolution of the mode
+    int m_displayLinesPerSecond;   //!< Waterfall speed and smoothing, per mode
+    int m_displaySmoothing;
 
     // Decodes
     QLabel *m_decodesTitle;
@@ -179,10 +199,27 @@ private:
     RBSDecodeModel *m_decodeModel;
     RBSDecodeFilter *m_decodeFilter;
     QStackedWidget *m_decodeViews;
+    QTabBar *m_decodeTabs;          //!< TABLEAU (MORSE DECK in Morse), TEXTE
+    QStackedWidget *m_decodePages;
+    QLabel *m_decodeCount;
+    QToolButton *m_freeze;
+    bool m_frozen;                 //!< "Figer": new decodes wait
+    QList<RBSFT8Log::Decode> m_frozenFT8;
+    QTextEdit *m_cwText;           //!< TEXTE tab: Morse decoded text, other decodes as lines
+    QTextEdit *m_morseDeck;        //!< MORSE DECK tab: the Morse text, callsigns and usual words coloured
+    RBSCWTap *m_cwTap;             //!< The RBS Morse decoder on the decoder channel's audio
+    QString m_deckWord;            //!< Word being received, not coloured yet
+    int m_deckWordStart;           //!< Its position in the deck, -1 if none
+    float m_deckWordConfidence;    //!< Lowest confidence of its characters
+    QString m_deckPreviousWord;
+    QDateTime m_cwStatsShown;
+    QLabel *m_cwStats;             //!< Pitch and speed detected
+    QString m_cwBuffer;            //!< Last decoded characters, searched for callsigns
+    QDateTime m_cwLastText;
     QTableView *m_decodeTable;
     QTreeWidget *m_countryTree;
     QLineEdit *m_search;
-    QCheckBox *m_groupByCountry;
+    QToolButton *m_groupByCountry;
     QLabel *m_newCountryBadge;
     RBSChipDelegate *m_call1Chip;
     RBSChipDelegate *m_call2Chip;
@@ -196,6 +233,30 @@ private:
     QHash<QString, QDateTime> m_countryFirstHeard;
     QSet<QString> m_seenCountries; //!< New countries the user opened
     QTimer m_countryTreeTimer;
+
+    // Decoder panel (right): the mode, the options of its decoder, filters
+    QWidget *m_decoderPanel;
+    QLabel *m_modeTitle;
+    QLabel *m_modeDemod;
+    QLabel *m_modeGroup;
+    QLabel *m_modeFrequencies;
+    QFormLayout *m_modeForm;
+    QLabel *m_modeDescription;
+    RBSSection *m_decoderSection;
+    QWidget *m_ft8Options;
+    QWidget *m_cwOptions;
+    QWidget *m_aprsOptions;
+    QWidget *m_adsbOptions;
+    QCheckBox *m_ft8CQOnly;
+    QCheckBox *m_ft8MineOnly;
+    QCheckBox *m_cwAuto;
+    QSlider *m_cwFilter;
+    QLabel *m_cwFilterText;
+    int m_cwMinConfidence;         //!< % : Morse text decoded with less confidence is not shown
+    QCheckBox *m_aprsPositionOnly;
+    QCheckBox *m_adsbPositionOnly;
+    QVBoxLayout *m_rightBox;
+    QVBoxLayout *m_tabDecoderBox;
 
     // Info
     QLabel *m_statsMessages;
@@ -221,11 +282,14 @@ private:
     QWidget *createSpectrum();
     QWidget *createDecodes();
     QWidget *createInfo();
+    QWidget *createDecoderPanel();
+    void updateDecoderPanel(const RBSMode& mode);
+    void appendTextLine(const QString& time, const QString& text);
     void createPages();
 
     void setLayoutMode(Layout layout);
     void populateDevices();
-    void populateModeList();
+
     void showModeSettings(const RBSMode& mode);
     void setupDecodeView(const RBSMode& mode);
     void readDeviceSettings();
@@ -233,6 +297,16 @@ private:
     void addEvent(const QString& text);
     void updateStationDisplay();
     void tuneTo(qint64 frequency);
+    void showTuned(qint64 frequency);
+    void setupMarker(const RBSMode& mode);
+    void onMarkerMoved();
+    void onCWDecoded();
+    void addMorseCharacter(const QString& text, float confidence);
+    void finishDeckWord();
+    void startMorseLine(QTextEdit *edit, const QString& time);
+    void trimText(QTextEdit *edit, int maxBlocks);
+    void updateSourceKind();
+    void findCallsigns(int newFrom);
     void applyZoom();
     void applyScale();
     void loadDisplay(const RBSMode& mode);

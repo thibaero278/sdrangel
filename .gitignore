@@ -53,3 +53,6 @@ wdsp/*.o
 wdsp/*.h
 wdsp/*.c
 wdsp/Makefile
+
+# Graphify (cache local, le graphe de référence est en ligne)
+graphify-out/

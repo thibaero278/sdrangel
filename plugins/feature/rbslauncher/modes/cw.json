@@ -1,0 +1,65 @@
+{
+    "id": "cw",
+    "order": 2,
+    "name": "Morse (CW)",
+    "group": "Amateur",
+    "band": "20 m HF",
+    "view": "cw",
+    "demod": "CW",
+    "description": "Le premier mode numérique : le Morse. Le décodeur RBS trouve seul la tonalité (200 à 3 000 Hz) et la vitesse (5 à 60 WPM) ; le texte s'écrit lettre par lettre.",
+    "listen": "CW",
+    "tunable": true,
+    "tuneShift": 650,
+    "device": {
+        "centerFrequency": 14000000,
+        "devSampleRate": 2000000,
+        "log2Decim": 3,
+        "fcPos": 2,
+        "ifAGC": 1,
+        "lnaIndex": 4,
+        "biasTee": 0,
+        "amNotch": 1,
+        "fmNotch": 1,
+        "dabNotch": 0
+    },
+    "channel": {
+        "type": "SSBDemod",
+        "inputFrequencyOffset": 24350,
+        "settings": {
+            "rfBandwidth": 1000,
+            "lowCutoff": 300,
+            "audioBinaural": 0,
+            "agc": 1,
+            "audioMute": 1
+        }
+    },
+    "marker": {
+        "sideband": "usb",
+        "low": 300,
+        "high": 1000
+    },
+    "spectrum": {
+        "fftSize": 8192,
+        "linesPerSecond": 8,
+        "max": -90,
+        "min": -130
+    },
+    "frequencies": [
+        { "band": "Balises NCDXF", "frequency": 14100000, "note": "18 balises du monde, chacune 10 s toutes les 3 min", "standard": true },
+        { "band": "Balises NCDXF", "frequency": 18110000, "note": "18 balises du monde, chacune 10 s toutes les 3 min" },
+        { "band": "Balises NCDXF", "frequency": 21150000, "note": "18 balises du monde, chacune 10 s toutes les 3 min" },
+        { "band": "Balises NCDXF", "frequency": 24930000, "note": "18 balises du monde, chacune 10 s toutes les 3 min" },
+        { "band": "Balises NCDXF", "frequency": 28200000, "note": "18 balises du monde, chacune 10 s toutes les 3 min" },
+        { "band": "Balises", "frequency": 10144000, "note": "DK0WCY Allemagne, météo spatiale, en continu", "standard": true },
+        { "band": "160 m HF", "frequency": 1830000, "note": "la nuit, en hiver" },
+        { "band": "80 m HF", "frequency": 3530000, "note": "la nuit, Europe" },
+        { "band": "40 m HF", "frequency": 7025000, "note": "jour et nuit, très actif", "standard": true },
+        { "band": "40 m HF", "frequency": 7047500, "note": "W1AW (USA), cours et bulletins, la nuit" },
+        { "band": "30 m HF", "frequency": 10115000, "note": "bande réservée à la CW et au numérique" },
+        { "band": "20 m HF", "frequency": 14025000, "note": "le jour, DX", "standard": true },
+        { "band": "17 m HF", "frequency": 18080000, "note": "le jour" },
+        { "band": "15 m HF", "frequency": 21030000, "note": "le jour, DX" },
+        { "band": "12 m HF", "frequency": 24900000, "note": "le jour" },
+        { "band": "10 m HF", "frequency": 28030000, "note": "le jour, selon la propagation" }
+    ]
+}

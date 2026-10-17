@@ -46,6 +46,7 @@ public:
 
 protected:
 	static QMutex m_globalPlanMutex;
+    static bool m_wisdomImported; // FFTW wisdom is global: the file is read once per process
     QString m_fftWisdomFileName;
 
 	struct Plan {

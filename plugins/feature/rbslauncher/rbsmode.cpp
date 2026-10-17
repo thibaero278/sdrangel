@@ -37,13 +37,29 @@ bool RBSMode::fromJson(const QJsonObject& json, RBSMode& mode)
     mode.m_band = json.value("band").toString();
     mode.m_view = json.value("view").toString();
     mode.m_demod = json.value("demod").toString();
+    mode.m_listen = json.value("listen").toString();
     mode.m_antenna = json.value("antenna").toString();
+    mode.m_description = json.value("description").toString();
+    mode.m_tip = json.value("tip").toString();
+    mode.m_tag = json.value("tag").toString();
     mode.m_device = json.value("device").toObject();
 
     QJsonObject channel = json.value("channel").toObject();
     mode.m_channelType = channel.value("type").toString();
     mode.m_channelOffset = channel.value("inputFrequencyOffset").toInt(0);
     mode.m_channelSettings = channel.value("settings").toObject();
+
+    QJsonObject feature = json.value("feature").toObject();
+    mode.m_featureType = feature.value("type").toString();
+    mode.m_featureURI = feature.value("uri").toString();
+    mode.m_featureSettings = feature.value("settings").toObject();
+
+    QJsonObject marker = json.value("marker").toObject();
+    mode.m_markerSideband = marker.value("sideband").toString();
+    mode.m_markerLow = marker.value("low").toInt(0);
+    mode.m_markerHigh = marker.value("high").toInt(0);
+    mode.m_tunable = json.value("tunable").toBool(false);
+    mode.m_tuneShift = json.value("tuneShift").toInt(0);
 
     const QJsonArray frequencies = json.value("frequencies").toArray();
 

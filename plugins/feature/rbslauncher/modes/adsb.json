@@ -1,11 +1,13 @@
 {
     "id": "adsb",
-    "order": 3,
+    "order": 4,
     "name": "ADS-B",
     "group": "Aviation",
     "band": "Aviation",
     "view": "adsb",
     "demod": "PPM",
+    "description": "Les avions diffusent leur identité, position, altitude et cap sur 1090 MHz, environ deux fois par seconde.",
+    "tip": "Une antenne verticale courte (6,9 cm) bien dégagée, en hauteur : la portée dépasse souvent 300 km.",
     "device": {
         "centerFrequency": 1090000000,
         "devSampleRate": 2000000,

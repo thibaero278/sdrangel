@@ -65,6 +65,7 @@ public:
     void setDevice(const QString& hwType, int sequence);  //!< Used from the next startMode
     const QString& getHwType() const { return m_hwType; }
     bool isSDRplay() const { return m_hwType == m_sdrplayHwType; }
+    bool isAudioSource() const { return m_hwType == "AudioInput"; }  //!< Sound card: audio, no frequency
     bool hasDevice() const;  //!< The device set has the chosen device
 
     void startMode(const RBSMode& mode);
@@ -84,14 +85,19 @@ public:
 
     qint64 getCenterFrequency() const;
     int getSampleRate() const;         //!< Baseband rate, after decimation
-    qint64 getTunedFrequency() const { return getCenterFrequency() + m_mode.m_channelOffset; }
+    //! Frequency of the decoder: device centre + channel offset (+ the CW pitch, see RBSMode::m_tuneShift)
+    qint64 getTunedFrequency() const { return getCenterFrequency() + m_channelOffset + m_mode.m_tuneShift; }
     void setTunedFrequency(qint64 frequency);  //!< Moves the device, keeping the channel offset
+    int getChannelOffset() const { return m_channelOffset; }
+    void setChannelOffset(int offset);  //!< Moves the decoder and listening channels, not the device
     bool setDeviceSetting(const QString& key, int value);
     bool getDeviceSetting(const QString& key, int& value) const;
+    bool setFeatureSetting(const QString& key, double value);  //!< Of the mode's decoder feature (Morse...)
 
     static const char* const m_sdrplayHwType;
     static const char* const m_channelTitle;      //!< Title of the decoder channel RBS adds
     static const char* const m_listenTitle;       //!< Title of the listening channel RBS adds
+    static const char* const m_featureTitle;      //!< Title of the decoder feature RBS adds (Morse...)
 
     static QString listenChannelType(const QString& demod);
     static int defaultBandwidth(const QString& demod);
@@ -125,7 +131,11 @@ private:
     const void *m_deviceSet;           //!< Identity of our device set (compared, never dereferenced as such)
     uint64_t m_channelUID;             //!< Our decoder channel, 0 if none
     uint64_t m_listenUID;              //!< Our listening channel, 0 if none
+    uint64_t m_featureUID;             //!< Our decoder feature, 0 if none
+    int m_channelOffset;               //!< Current offset of the decoder and listening channels
     QSet<uint64_t> m_channelsBefore;
+    QSet<uint64_t> m_featuresBefore;
+    bool m_featureSelectRetried;
     int m_deviceSetCountBefore;
 
     void setState(State state, const QString& message);
@@ -140,6 +150,12 @@ private:
     int channelIndex(uint64_t uid) const;
     ChannelAPI *channel(uint64_t uid) const;
     QList<int> rbsChannelIndexes() const;
+    QSet<uint64_t> featureUIDs() const;
+    int featureIndex(uint64_t uid) const;
+    QList<int> rbsFeatureIndexes() const;
+    bool featureSelectedChannel() const;
+    bool selectFeatureChannel();
+    void addFeatureSteps();
     void applyListenSettings(const Listen& listen, bool all);
 
 private slots:

@@ -17,6 +17,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <QDebug>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QScopedPointer>
 
@@ -45,6 +46,7 @@ static const QStringList packetURIs = {
     QStringLiteral("sdrangel.channel.inmarsatdemod"),
     QStringLiteral("sdrangel.channel.radiosondedemod"),
     QStringLiteral("sdrangel.channel.droneiddemod"),
+    QStringLiteral("sdrangel.feature.morsedecoder"),
 };
 static const QStringList packetPipes = {"packets", "ais", "radiosonde"};
 
@@ -459,6 +461,12 @@ QJsonObject MCPDataFeed::decodePacket(const QString& sourceType, const QByteArra
                 decoded["aprs"] = a;
             }
         }
+    }
+    else if (sourceType == "MorseDecoder")
+    {
+        // Decoded text of a 3 s window with GGMorse statistics, already JSON
+        decoded = QJsonDocument::fromJson(bytes).object();
+        decoded["protocol"] = "Morse";
     }
 
     return decoded;

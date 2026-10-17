@@ -29,6 +29,13 @@ RBSSection::RBSSection(const QString& title, QWidget *parent) :
 
     m_header = new QToolButton(this);
     m_header->setObjectName("rbsSectionHeader");
+    // As the MultiPSK Deck: small capitals, spaced
+    QFont headerFont = m_header->font();
+    headerFont.setBold(true);
+    headerFont.setCapitalization(QFont::AllUppercase);
+    headerFont.setLetterSpacing(QFont::PercentageSpacing, 110);
+    headerFont.setPointSizeF(headerFont.pointSizeF() * 0.9);
+    m_header->setFont(headerFont);
     m_header->setText(title);
     m_header->setCheckable(true);
     m_header->setChecked(true);
@@ -56,6 +63,11 @@ RBSSection::RBSSection(const QString& title, QWidget *parent) :
     layout->addWidget(m_body);
 
     connect(m_header, &QToolButton::toggled, this, &RBSSection::setExpanded);
+}
+
+void RBSSection::setTitle(const QString& title)
+{
+    m_header->setText(title);
 }
 
 void RBSSection::addWidget(QWidget *widget)

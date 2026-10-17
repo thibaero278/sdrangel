@@ -16,6 +16,8 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
+
 #include "dsp/spectrumvis.h"
 #include "gui/glspectrum.h"
 
@@ -25,8 +27,31 @@ RBSSpectrumTee::RBSSpectrumTee(GLSpectrum *rbsSpectrum) :
     m_rbsSpectrum(rbsSpectrum),
     m_original(nullptr),
     m_spectrumVis(nullptr),
-    m_attaching(false)
+    m_attaching(false),
+    m_linesPerSecond(12),
+    m_smoothing(0.0f),
+    m_sumCount(0)
 {
+    m_lineTimer.start();
+}
+
+void RBSSpectrumTee::setLinesPerSecond(int linesPerSecond)
+{
+    QMutexLocker locker(&m_mutex);
+    m_linesPerSecond = std::max(1, linesPerSecond);
+}
+
+void RBSSpectrumTee::setSmoothing(float smoothing)
+{
+    QMutexLocker locker(&m_mutex);
+    m_smoothing = std::max(0.0f, std::min(0.95f, smoothing));
+}
+
+bool RBSSpectrumTee::getLastSpectrum(std::vector<float>& spectrum) const
+{
+    QMutexLocker locker(&m_mutex);
+    spectrum = m_line;
+    return !spectrum.empty();
 }
 
 RBSSpectrumTee::~RBSSpectrumTee()
@@ -77,9 +102,61 @@ void RBSSpectrumTee::newSpectrum(const Real* spectrum, int fftSize)
     if (m_original) {
         m_original->newSpectrum(spectrum, fftSize);
     }
-    if (m_rbsSpectrum) {
-        m_rbsSpectrum->newSpectrum(spectrum, fftSize);
+
+    if (!m_rbsSpectrum || (fftSize <= 0)) {
+        return;
     }
+
+    if ((int) m_average.size() != fftSize)
+    {
+        m_average.assign(spectrum, spectrum + fftSize);
+        m_sum.assign(fftSize, 0.0);
+        m_sumCount = 0;
+    }
+
+    // Smoothing: exponential average, continuous. Without it: plain average of the spectra of the
+    // line, so that a slow waterfall does not miss short signals
+    if (m_smoothing > 0.0f)
+    {
+        for (int i = 0; i < fftSize; i++) {
+            m_average[i] = m_smoothing * m_average[i] + (1.0f - m_smoothing) * spectrum[i];
+        }
+    }
+    else
+    {
+        for (int i = 0; i < fftSize; i++) {
+            m_sum[i] += spectrum[i];
+        }
+
+        m_sumCount++;
+    }
+
+    // One line per 1/linesPerSecond second
+    if (m_lineTimer.elapsed() < 1000 / m_linesPerSecond) {
+        return;
+    }
+
+    m_lineTimer.restart();
+
+    if (m_smoothing > 0.0f)
+    {
+        m_line = m_average;
+    }
+    else
+    {
+        m_line.resize(fftSize);
+
+        for (int i = 0; i < fftSize; i++)
+        {
+            m_line[i] = m_sumCount > 0 ? (float) (m_sum[i] / m_sumCount) : spectrum[i];
+            m_sum[i] = 0.0;
+        }
+
+        m_sumCount = 0;
+        m_average = m_line; // so that turning smoothing on starts from here
+    }
+
+    m_rbsSpectrum->newSpectrum(m_line.data(), fftSize);
 }
 
 void RBSSpectrumTee::setSpectrumVis(SpectrumVis *spectrumVis)

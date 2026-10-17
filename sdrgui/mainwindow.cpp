@@ -246,13 +246,9 @@ MainWindow::MainWindow(qtwebapp::LoggerWithFile *logger, const MainParser& parse
         QString filePath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
         filePath += QDir::separator();
         filePath += "fftw-wisdom";
-        auto fileInfo = QFileInfo(filePath);
-
-        if (fileInfo.exists()) {
-            m_dspEngine->createFFTFactory(filePath);
-        } else {
-            m_dspEngine->createFFTFactory("");
-        }
+        // Given even when it does not exist yet: the FFTW engine creates it with the first plans
+        QDir().mkpath(QFileInfo(filePath).absolutePath());
+        m_dspEngine->createFFTFactory(filePath);
     }
 
     m_dspEngine->preAllocateFFTs();

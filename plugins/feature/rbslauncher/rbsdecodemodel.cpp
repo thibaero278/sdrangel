@@ -57,6 +57,11 @@ void RBSDecodeModel::upsertRow(const QString& key, const QStringList& cells, Kin
     {
         if (m_rows[i].m_key == key)
         {
+            // Nothing new (aircraft refreshed every second): no move, no redraw, no refiltering
+            if ((m_rows[i].m_cells == cells) && (m_rows[i].m_kind == kind)) {
+                return;
+            }
+
             // Move the updated row to the top so the most recently heard is first
             if (i > 0)
             {
@@ -72,9 +77,8 @@ void RBSDecodeModel::upsertRow(const QString& key, const QStringList& cells, Kin
         }
     }
 
-    beginInsertRows(QModelIndex(), 0, 0);
-    m_rows.prepend(Row{key, cells, kind});
-    endInsertRows();
+    addRow(cells, kind);
+    m_rows[0].m_key = key;
 }
 
 void RBSDecodeModel::clear()
@@ -131,9 +135,8 @@ QVariant RBSDecodeModel::data(const QModelIndex& index, int role) const
     case Qt::FontRole:
         if (index.column() == m_boldColumn)
         {
-            QFont font;
-            font.setBold(true);
-            return font;
+            static const QFont bold = []() { QFont font; font.setBold(true); return font; }();
+            return bold;
         }
         break;
     case KindRole:
@@ -172,9 +175,42 @@ void RBSDecodeFilter::setHighlightedOnly(bool highlightedOnly)
     invalidateFilter();
 }
 
+void RBSDecodeFilter::setRequirement(const QString& name, int column, const QString& value, bool exact)
+{
+    m_requirements.insert(name, Requirement{column, value, exact});
+    invalidateFilter();
+}
+
+void RBSDecodeFilter::removeRequirement(const QString& name)
+{
+    if (m_requirements.remove(name) > 0) {
+        invalidateFilter();
+    }
+}
+
+void RBSDecodeFilter::clearRequirements()
+{
+    if (!m_requirements.isEmpty())
+    {
+        m_requirements.clear();
+        invalidateFilter();
+    }
+}
+
 bool RBSDecodeFilter::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const
 {
     QAbstractItemModel *model = sourceModel();
+
+    for (const auto& requirement : m_requirements)
+    {
+        QString cell = model->data(model->index(sourceRow, requirement.m_column, sourceParent)).toString();
+
+        if (requirement.m_value.isEmpty() ? cell.isEmpty() :
+            requirement.m_exact ? (cell.compare(requirement.m_value, Qt::CaseInsensitive) != 0) :
+            !cell.startsWith(requirement.m_value, Qt::CaseInsensitive)) {
+            return false;
+        }
+    }
 
     if (m_highlightedOnly)
     {

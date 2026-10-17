@@ -2,10 +2,12 @@
     "id": "ft8_20m",
     "order": 1,
     "name": "FT8",
-    "group": "HF numérique",
+    "group": "Amateur",
     "band": "20 m HF",
     "view": "ft8",
     "demod": "USB",
+    "description": "Mode numérique des radioamateurs pour des contacts rapides, décodable jusqu'à 24 dB sous le bruit. Chaque message dure 12,6 s.",
+    "tip": "Créneaux de 15 s calés sur l'heure UTC : l'horloge du PC doit être à l'heure à la seconde près, sinon rien ne décode.",
     "device": {
         "centerFrequency": 14060000,
         "devSampleRate": 2000000,
@@ -24,6 +26,11 @@
         "settings": {
             "logMessages": 1
         }
+    },
+    "marker": {
+        "sideband": "usb",
+        "low": 200,
+        "high": 3000
     },
     "spectrum": {
         "fftSize": 8192,

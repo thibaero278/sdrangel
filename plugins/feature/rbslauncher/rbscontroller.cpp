@@ -21,6 +21,9 @@
 #include "SWGChannelSettings.h"
 #include "SWGDeviceListItem.h"
 #include "SWGErrorResponse.h"
+#include "SWGFeatureActions.h"
+#include "SWGFeatureSettings.h"
+#include "SWGMorseDecoderActions.h"
 #include "SWGSuccessResponse.h"
 
 #include "channel/channelapi.h"
@@ -29,6 +32,9 @@
 #include "device/deviceenumerator.h"
 #include "device/deviceset.h"
 #include "dsp/devicesamplesource.h"
+#include "feature/feature.h"
+#include "feature/featureset.h"
+#include "pipes/objectpipe.h"
 #include "webapi/webapiadapterinterface.h"
 #include "maincore.h"
 
@@ -37,6 +43,7 @@
 const char* const RBSController::m_sdrplayHwType = "SDRplayV3";
 const char* const RBSController::m_channelTitle = "RBS";
 const char* const RBSController::m_listenTitle = "RBS écoute";
+const char* const RBSController::m_featureTitle = "RBS décodeur";
 
 RBSController::RBSController(WebAPIAdapterInterface *webAPIAdapterInterface, QObject *parent) :
     QObject(parent),
@@ -49,6 +56,9 @@ RBSController::RBSController(WebAPIAdapterInterface *webAPIAdapterInterface, QOb
     m_deviceSet(nullptr),
     m_channelUID(0),
     m_listenUID(0),
+    m_featureUID(0),
+    m_channelOffset(0),
+    m_featureSelectRetried(false),
     m_deviceSetCountBefore(0)
 {
     m_pollTimer.setInterval(100);
@@ -201,6 +211,203 @@ QList<int> RBSController::rbsChannelIndexes() const
     return indexes;
 }
 
+// Features (Morse decoder...) live in the single feature set of the GUI, as the RBS Launcher itself
+static FeatureSet *featureSet()
+{
+    std::vector<FeatureSet*>& featureSets = MainCore::instance()->getFeatureeSets();
+    return featureSets.empty() ? nullptr : featureSets[0];
+}
+
+QSet<uint64_t> RBSController::featureUIDs() const
+{
+    QSet<uint64_t> uids;
+
+    if (FeatureSet *features = featureSet())
+    {
+        for (int i = 0; i < features->getNumberOfFeatures(); i++)
+        {
+            if (Feature *feature = features->getFeatureAt(i)) {
+                uids.insert(feature->getUID());
+            }
+        }
+    }
+
+    return uids;
+}
+
+int RBSController::featureIndex(uint64_t uid) const
+{
+    FeatureSet *features = featureSet();
+
+    if (!features || (uid == 0)) {
+        return -1;
+    }
+
+    for (int i = 0; i < features->getNumberOfFeatures(); i++)
+    {
+        Feature *feature = features->getFeatureAt(i);
+
+        if (feature && (feature->getUID() == uid)) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+// Decoder features RBS added, recognised by their title, in increasing index order
+QList<int> RBSController::rbsFeatureIndexes() const
+{
+    QList<int> indexes;
+    FeatureSet *features = featureSet();
+
+    if (!features) {
+        return indexes;
+    }
+
+    for (int i = 0; i < features->getNumberOfFeatures(); i++)
+    {
+        QString title;
+
+        if (ChannelWebAPIUtils::getFeatureSetting(0, i, "title", title) && (title == m_featureTitle)) {
+            indexes.append(i);
+        }
+    }
+
+    return indexes;
+}
+
+// The decoder feature takes the demodulated audio of our decoder channel through a "demod" data pipe
+bool RBSController::featureSelectedChannel() const
+{
+    ChannelAPI *decoder = getChannel();
+    int index = featureIndex(m_featureUID);
+
+    if (!decoder || (index < 0)) {
+        return false;
+    }
+
+    const Feature *feature = featureSet()->getFeatureAt(index);
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getDataPipes().getDataPipes(decoder, "demod", pipes);
+
+    for (const auto pipe : pipes)
+    {
+        if (pipe->m_consumer == feature) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool RBSController::selectFeatureChannel()
+{
+    int index = featureIndex(m_featureUID);
+
+    if ((index < 0) || (m_mode.m_featureType != "MorseDecoder")) {
+        return false;
+    }
+
+    SWGSDRangel::SWGFeatureActions query;
+    query.setFeatureType(new QString(m_mode.m_featureType));
+    SWGSDRangel::SWGMorseDecoderActions *actions = new SWGSDRangel::SWGMorseDecoderActions();
+    actions->setDeviceId(getDeviceSetIndex());
+    actions->setChannelId(getChannelIndex());
+    query.setMorseDecoderActions(actions);
+    SWGSDRangel::SWGSuccessResponse response;
+    SWGSDRangel::SWGErrorResponse errorResponse;
+    errorResponse.init();
+    int rc = m_webAPIAdapterInterface->featuresetFeatureActionsPost(0, index, {"deviceId", "channelId"}, query, response, errorResponse);
+
+    if (rc / 100 != 2) {
+        qWarning("RBSController::selectFeatureChannel: %s", qPrintable(*errorResponse.getMessage()));
+    }
+
+    return rc / 100 == 2;
+}
+
+// The decoder feature of the mode (Morse decoder): added, titled, set up, fed with the audio of the
+// decoder channel and started
+void RBSController::addFeatureSteps()
+{
+    addStep(QString("Ajout du décodeur %1").arg(m_mode.m_featureType),
+        [this](QString& error) {
+            m_featuresBefore = featureUIDs();
+            SWGSDRangel::SWGFeatureSettings query;
+            query.setFeatureType(new QString(m_mode.m_featureType));
+            SWGSDRangel::SWGSuccessResponse response;
+            SWGSDRangel::SWGErrorResponse errorResponse;
+            errorResponse.init();
+            int rc = m_webAPIAdapterInterface->featuresetFeaturePost(0, query, response, errorResponse);
+
+            if (rc / 100 != 2)
+            {
+                error = QString("Impossible d'ajouter le décodeur %1 : %2").arg(m_mode.m_featureType).arg(*errorResponse.getMessage());
+                return false;
+            }
+
+            return true;
+        },
+        [this]() {
+            for (auto uid : featureUIDs())
+            {
+                if (!m_featuresBefore.contains(uid))
+                {
+                    m_featureUID = uid;
+                    return true;
+                }
+            }
+
+            return false;
+        },
+        5000, QString("Le décodeur %1 n'a pas pu être ajouté").arg(m_mode.m_featureType));
+
+    addStep("Réglage du décodeur Morse",
+        [this](QString& error) {
+            int index = featureIndex(m_featureUID);
+
+            if (index < 0)
+            {
+                error = "Le décodeur a disparu";
+                return false;
+            }
+
+            ChannelWebAPIUtils::patchFeatureSetting(0, index, "title", QString(m_featureTitle));
+
+            for (auto it = m_mode.m_featureSettings.constBegin(); it != m_mode.m_featureSettings.constEnd(); ++it)
+            {
+                bool ok = it.value().isString() ?
+                    ChannelWebAPIUtils::patchFeatureSetting(0, index, it.key(), it.value().toString()) :
+                    ChannelWebAPIUtils::patchFeatureSetting(0, index, it.key(), it.value().toDouble());
+
+                if (!ok) {
+                    qWarning("RBSController: could not set feature setting %s", qPrintable(it.key()));
+                }
+            }
+
+            m_featureSelectRetried = false;
+            selectFeatureChannel();
+            ChannelWebAPIUtils::runFeature(0, index);
+            return true;
+        },
+        [this]() {
+            if (featureSelectedChannel()) {
+                return true;
+            }
+
+            // The feature may not have seen the channel yet when it was asked: ask again once
+            if (!m_featureSelectRetried && (m_stepTimer.elapsed() > 1500))
+            {
+                m_featureSelectRetried = true;
+                selectFeatureChannel();
+            }
+
+            return false;
+        },
+        6000, "Le décodeur Morse ne reçoit pas le son du canal");
+}
+
 // The device set already used, else the first Rx one, preferring one that has the chosen device
 DeviceSet *RBSController::findRxDeviceSet() const
 {
@@ -289,6 +496,8 @@ void RBSController::startMode(const RBSMode& mode)
     m_pollTimer.stop();
     m_steps.clear();
     m_mode = mode;
+    // A sound card gives the audio as it is: the decoder at its centre, no frequency to set
+    m_channelOffset = isAudioSource() ? 0 : mode.m_channelOffset;
     m_modeStartPending = true;
     setState(Starting, QString("Lancement de %1…").arg(mode.m_name));
 
@@ -391,14 +600,24 @@ void RBSController::startMode(const RBSMode& mode)
         },
         8000, QString("%1 ne répond pas. Ferme les autres logiciels qui l'utilisent (SDR++, SDRuno, SatDump).").arg(deviceName()));
 
-    // 4. Remove the channels RBS added before (decoder and listening)
+    // 4. Remove the channels and decoder features RBS added before (decoder and listening)
     addStep("Retrait des canaux précédents",
         [this](QString& error) {
             (void) error;
             int deviceSetIndex = getDeviceSetIndex();
             QList<int> rbsChannels = rbsChannelIndexes();
+            QList<int> rbsFeatures = rbsFeatureIndexes();
 
-            // From the highest index, as deleting a channel renumbers the ones after it
+            // From the highest index, as deleting a channel renumbers the ones after it.
+            // Features first: they stop taking the channel audio
+            for (int i = rbsFeatures.size() - 1; i >= 0; i--)
+            {
+                SWGSDRangel::SWGSuccessResponse response;
+                SWGSDRangel::SWGErrorResponse errorResponse;
+                errorResponse.init();
+                m_webAPIAdapterInterface->featuresetFeatureDelete(0, rbsFeatures[i], response, errorResponse);
+            }
+
             for (int i = rbsChannels.size() - 1; i >= 0; i--)
             {
                 SWGSDRangel::SWGSuccessResponse response;
@@ -410,10 +629,11 @@ void RBSController::startMode(const RBSMode& mode)
             return true;
         },
         [this]() {
-            if (rbsChannelIndexes().isEmpty())
+            if (rbsChannelIndexes().isEmpty() && rbsFeatureIndexes().isEmpty())
             {
                 m_channelUID = 0;
                 m_listenUID = 0;
+                m_featureUID = 0;
                 return true;
             }
 
@@ -435,9 +655,14 @@ void RBSController::startMode(const RBSMode& mode)
 
             for (auto it = m_mode.m_device.constBegin(); it != m_mode.m_device.constEnd(); ++it)
             {
-                if (it.key() == "centerFrequency") {
-                    ChannelWebAPIUtils::setCenterFrequency(deviceSetIndex, it.value().toDouble());
-                } else if (isSDRplay() && !ChannelWebAPIUtils::patchDeviceSetting(deviceSetIndex, it.key(), it.value().toInt())) {
+                if (it.key() == "centerFrequency")
+                {
+                    if (!isAudioSource()) {
+                        ChannelWebAPIUtils::setCenterFrequency(deviceSetIndex, it.value().toDouble());
+                    }
+                }
+                else if (isSDRplay() && !ChannelWebAPIUtils::patchDeviceSetting(deviceSetIndex, it.key(), it.value().toInt()))
+                {
                     qWarning("RBSController: could not set device setting %s", qPrintable(it.key()));
                 }
             }
@@ -458,7 +683,7 @@ void RBSController::startMode(const RBSMode& mode)
             }
 
             ChannelWebAPIUtils::patchChannelSetting(decoder, "title", QString(m_channelTitle));
-            ChannelWebAPIUtils::patchChannelSetting(decoder, "inputFrequencyOffset", m_mode.m_channelOffset);
+            ChannelWebAPIUtils::patchChannelSetting(decoder, "inputFrequencyOffset", m_channelOffset);
 
             for (auto it = m_mode.m_channelSettings.constBegin(); it != m_mode.m_channelSettings.constEnd(); ++it)
             {
@@ -467,10 +692,23 @@ void RBSController::startMode(const RBSMode& mode)
                 }
             }
 
+            // Morse from a sound card (WebSDR, recording): the tone can be anywhere in the audio,
+            // the whole of it goes to the decoder, which finds the tone itself
+            if (isAudioSource() && (m_mode.m_view == "cw"))
+            {
+                ChannelWebAPIUtils::patchChannelSetting(decoder, "rfBandwidth", 3000);
+                ChannelWebAPIUtils::patchChannelSetting(decoder, "lowCutoff", 100);
+            }
+
             return true;
         });
 
-    // 7. Run
+    // 7. The feature that decodes the channel audio, if the mode has one (Morse decoder)
+    if (!m_mode.m_featureType.isEmpty()) {
+        addFeatureSteps();
+    }
+
+    // 8. Run
     addStep("Démarrage",
         [this](QString& error) {
             (void) error;
@@ -536,7 +774,7 @@ void RBSController::setListen(const Listen& listen)
             }
 
             ChannelWebAPIUtils::patchChannelSetting(listenChannel, "title", QString(m_listenTitle));
-            ChannelWebAPIUtils::patchChannelSetting(listenChannel, "inputFrequencyOffset", m_mode.m_channelOffset);
+            ChannelWebAPIUtils::patchChannelSetting(listenChannel, "inputFrequencyOffset", m_channelOffset);
             ChannelWebAPIUtils::patchChannelSetting(listenChannel, "audioMute", 0);
             applyListenSettings(listen, true);
             return true;
@@ -735,7 +973,19 @@ void RBSController::setTunedFrequency(qint64 frequency)
     int deviceSetIndex = getDeviceSetIndex();
 
     if (deviceSetIndex >= 0) {
-        ChannelWebAPIUtils::setCenterFrequency(deviceSetIndex, (double) (frequency - m_mode.m_channelOffset));
+        ChannelWebAPIUtils::setCenterFrequency(deviceSetIndex, (double) (frequency - m_channelOffset - m_mode.m_tuneShift));
+    }
+}
+
+void RBSController::setChannelOffset(int offset)
+{
+    m_channelOffset = offset;
+
+    if (ChannelAPI *decoder = getChannel()) {
+        ChannelWebAPIUtils::patchChannelSetting(decoder, "inputFrequencyOffset", offset);
+    }
+    if (ChannelAPI *listenChannel = channel(m_listenUID)) {
+        ChannelWebAPIUtils::patchChannelSetting(listenChannel, "inputFrequencyOffset", offset);
     }
 }
 
@@ -743,6 +993,12 @@ bool RBSController::setDeviceSetting(const QString& key, int value)
 {
     int deviceSetIndex = getDeviceSetIndex();
     return (deviceSetIndex >= 0) && ChannelWebAPIUtils::patchDeviceSetting(deviceSetIndex, key, value);
+}
+
+bool RBSController::setFeatureSetting(const QString& key, double value)
+{
+    int index = featureIndex(m_featureUID);
+    return (index >= 0) && ChannelWebAPIUtils::patchFeatureSetting(0, index, key, value);
 }
 
 bool RBSController::getDeviceSetting(const QString& key, int& value) const

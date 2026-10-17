@@ -20,6 +20,7 @@
 
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QFileInfo>
 
 #include "dsp/fftwengine.h"
 #include "util/profiler.h"
@@ -67,9 +68,14 @@ void FFTWEngine::configure(int n, bool inverse)
 	t.start();
     m_globalPlanMutex.lock();
 
-    if (m_fftWisdomFileName.size() > 0)
+    if (m_fftWisdomFileName.isEmpty())
+    {
+        qDebug("FFTWEngine::configure: no FFTW wisdom file");
+    }
+    else if (!m_wisdomImported && QFileInfo::exists(m_fftWisdomFileName))
     {
         int rc = fftwf_import_wisdom_from_filename(m_fftWisdomFileName.toStdString().c_str());
+        m_wisdomImported = true;
 
         if (rc == 0) { // that's an error (undocumented)
             qInfo("FFTWEngine::configure: importing from FFTW wisdom file: '%s' failed", qPrintable(m_fftWisdomFileName));
@@ -77,15 +83,22 @@ void FFTWEngine::configure(int n, bool inverse)
             qDebug("FFTWEngine::configure: successfully imported from FFTW wisdom file: '%s'", qPrintable(m_fftWisdomFileName));
         }
     }
-    else
-    {
-        qDebug("FFTWEngine::configure: no FFTW wisdom file");
-    }
 
 	m_currentPlan->plan = fftwf_plan_dft_1d(n, m_currentPlan->in, m_currentPlan->out, inverse ? FFTW_BACKWARD : FFTW_FORWARD, FFTW_PATIENT);
+    qint64 elapsed = t.elapsed();
+
+    // A plan that took time was not in the wisdom: save it so the next start gets it at once
+    // (FFTW_PATIENT planning costs about 3 s per start otherwise)
+    if (!m_fftWisdomFileName.isEmpty() && (elapsed > 20))
+    {
+        if (fftwf_export_wisdom_to_filename(m_fftWisdomFileName.toStdString().c_str()) == 0) {
+            qInfo("FFTWEngine::configure: exporting to FFTW wisdom file: '%s' failed", qPrintable(m_fftWisdomFileName));
+        }
+    }
+
     m_globalPlanMutex.unlock();
 
-    qDebug("FFT: creating FFTW plan (n=%d,%s) took %lld ms", n, inverse ? "inverse" : "forward", t.elapsed());
+    qDebug("FFT: creating FFTW plan (n=%d,%s) took %lld ms", n, inverse ? "inverse" : "forward", elapsed);
 	m_plans.push_back(m_currentPlan);
 }
 
@@ -114,6 +127,7 @@ Complex* FFTWEngine::out()
 }
 
 QMutex FFTWEngine::m_globalPlanMutex;
+bool FFTWEngine::m_wisdomImported = false;
 
 void FFTWEngine::freeAll()
 {

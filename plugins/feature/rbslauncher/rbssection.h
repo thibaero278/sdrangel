@@ -36,6 +36,7 @@ public:
     QWidget *body() { return m_body; }
     QFormLayout *form() { return m_form; }   //!< Label / control rows
     void addWidget(QWidget *widget);         //!< Full width row
+    void setTitle(const QString& title);
     void setExpanded(bool expanded);
     bool isExpanded() const;
 

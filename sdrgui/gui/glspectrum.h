@@ -67,6 +67,7 @@ public:
     void setReferenceLevel(Real referenceLevel) { m_spectrum->setReferenceLevel(referenceLevel); }
     void setReferenceLevelRange(Real minReferenceLevel, Real maxReferenceLevel) { m_spectrum->setReferenceLevelRange(minReferenceLevel, maxReferenceLevel); }
     void setPowerRange(Real powerRange){ m_spectrum->setPowerRange(powerRange); }
+    void setScale(Real referenceLevel, Real powerRange) { m_spectrum->setScale(referenceLevel, powerRange); }
     void setPowerRangeRange(Real minPowerRange, Real maxPowerRange) { m_spectrum->setPowerRangeRange(minPowerRange, maxPowerRange); }
     void setDecay(int decay) { m_spectrum->setDecay(decay); }
     void setDecayDivisor(int decayDivisor) { m_spectrum->setDecayDivisor(decayDivisor); }
@@ -80,6 +81,7 @@ public:
     void setSsbSpectrum(bool ssbSpectrum) { m_spectrum->setSsbSpectrum(ssbSpectrum); }
     void setLsbDisplay(bool lsbDisplay) { m_spectrum->setLsbDisplay(lsbDisplay); }
     void setInvertedWaterfall(bool inv) { m_spectrum->setInvertedWaterfall(inv); }
+    void setCompactLayout(bool compact) { m_spectrum->setCompactLayout(compact); }
     void setDisplayMaxHold(bool display) { m_spectrum->setDisplayMaxHold(display); }
     void setDisplayCurrent(bool display) { m_spectrum->setDisplayCurrent(display); }
     void setDisplayHistogram(bool display) { m_spectrum->setDisplayHistogram(display); }

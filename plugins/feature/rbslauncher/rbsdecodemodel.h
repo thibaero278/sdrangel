@@ -69,7 +69,8 @@ private:
     QList<Row> m_rows;  //!< m_rows[0] is the newest
 };
 
-// Text search over all columns, plus an optional "highlighted rows only" (CQ only) filter
+// Text search over all columns, an optional "highlighted rows only" filter, and column
+// requirements of the decoder panel ("CQ only": call 1 starts with CQ, "with position"...)
 class RBSDecodeFilter : public QSortFilterProxyModel
 {
     Q_OBJECT
@@ -77,13 +78,26 @@ public:
     explicit RBSDecodeFilter(QObject *parent = nullptr);
     void setSearch(const QString& text);
     void setHighlightedOnly(bool highlightedOnly);
+    //! The cell of column must start with value (equal it if exact; not be empty if value is empty).
+    //! Replaces the requirement of the same name
+    void setRequirement(const QString& name, int column, const QString& value, bool exact = false);
+    void removeRequirement(const QString& name);
+    void clearRequirements();
 
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;
 
 private:
+    struct Requirement
+    {
+        int m_column;
+        QString m_value;
+        bool m_exact;
+    };
+
     QString m_search;
     bool m_highlightedOnly;
+    QHash<QString, Requirement> m_requirements;
 };
 
 #endif // INCLUDE_FEATURE_RBSDECODEMODEL_H_

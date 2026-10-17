@@ -19,6 +19,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QBuffer>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include "SWGFeatureSettings.h"
 #include "SWGFeatureActions.h"
@@ -29,6 +31,8 @@
 #include "channel/channelapi.h"
 #include "maincore.h"
 #include "settings/serializable.h"
+#include "pipes/objectpipe.h"
+#include "util/messagequeue.h"
 
 #include "morsedecoderworker.h"
 #include "morsedecoder.h"
@@ -272,6 +276,27 @@ bool MorseDecoder::handleMessage(const Message& cmd)
                 bytes.size(),
                 QHostAddress(m_settings.m_udpAddress), m_settings.m_udpPort
             );
+        }
+
+        // Publish on the packets pipe, with pitch, speed and cost, for the MCP server and other front ends
+        QList<ObjectPipe*> packetsPipes;
+        MainCore::instance()->getMessagePipes().getMessagePipes(this, "packets", packetsPipes);
+
+        if (!packetsPipes.isEmpty())
+        {
+            QJsonObject json;
+            json["text"] = MorseDecoderSettings::formatText(report.getText());
+            json["pitchHz"] = report.m_estimatedPitchHz;
+            json["speedWPM"] = report.m_estimatedSpeedWPM;
+            json["cost"] = report.m_costFunction;
+            QByteArray bytes = QJsonDocument(json).toJson(QJsonDocument::Compact);
+            QDateTime now = QDateTime::currentDateTime();
+
+            for (const auto& pipe : packetsPipes)
+            {
+                MessageQueue *messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+                messageQueue->push(MainCore::MsgPacket::create(this, bytes, now));
+            }
         }
 
         return true;

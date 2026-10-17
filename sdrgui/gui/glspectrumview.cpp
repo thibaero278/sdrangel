@@ -90,6 +90,7 @@ GLSpectrumView::GLSpectrumView(QWidget* parent) :
     m_displayGridIntensity(5),
     m_displayTraceIntensity(50),
     m_invertedWaterfall(true),
+    m_compactLayout(false),
     m_displayMaxHold(false),
     m_currentSpectrum(nullptr),
     m_displayCurrent(false),
@@ -358,6 +359,17 @@ void GLSpectrumView::setReferenceLevel(Real referenceLevel)
     update();
 }
 
+void GLSpectrumView::setScale(Real referenceLevel, Real powerRange)
+{
+    m_mutex.lock();
+    m_referenceLevel = referenceLevel;
+    m_powerRange = powerRange;
+    m_changesPending = true;
+    redrawWaterfallAnd3DSpectrogram();
+    m_mutex.unlock();
+    update();
+}
+
 void GLSpectrumView::setPowerRange(Real powerRange)
 {
     m_mutex.lock();
@@ -483,6 +495,16 @@ void GLSpectrumView::setSsbSpectrum(bool ssbSpectrum)
 void GLSpectrumView::setLsbDisplay(bool lsbDisplay)
 {
     m_lsbDisplay = lsbDisplay;
+    update();
+}
+
+void GLSpectrumView::setCompactLayout(bool compact)
+{
+    m_mutex.lock();
+    m_compactLayout = compact;
+    m_changesPending = true;
+    m_redrawAll = true;
+    m_mutex.unlock();
     update();
 }
 
@@ -1011,6 +1033,16 @@ void GLSpectrumView::redrawSpectrum()
 
 void GLSpectrumView::redrawWaterfallAnd3DSpectrogram()
 {
+    // Zoom or FFT size changed and the images are not reallocated yet (that is applyChanges' job, on
+    // the next paint): rows of the new width would be written past their end. Redraw from there.
+    if ((m_waterfallBuffer && (m_waterfallBuffer->width() != m_nbBins + 1))
+        || (m_3DSpectrogramBuffer && (m_3DSpectrogramBuffer->width() != m_nbBins + 1)))
+    {
+        m_redrawAll = true;
+        m_changesPending = true;
+        return;
+    }
+
     if (m_waterfallBuffer && m_spectrumBuffer.size() > 0)
     {
         int idx = m_spectrumBuffer.size() - 1 - m_waterfallBuffer->height() - scrollBarValue();
@@ -1024,8 +1056,9 @@ void GLSpectrumView::redrawWaterfallAnd3DSpectrogram()
         {
             if ((idx >= 0) && (idx < (int) m_spectrumBuffer.size()))
             {
-                updateWaterfall(m_spectrumBuffer[idx].m_spectrum, m_fftSize, m_fftMin, m_nbBins);
-                update3DSpectrogram(m_spectrumBuffer[idx].m_spectrum, m_fftSize, m_fftMin, m_nbBins);
+                const Real *spectrum = alignedSpectrum(m_spectrumBuffer[idx]);
+                updateWaterfall(spectrum, m_fftSize, m_fftMin, m_nbBins);
+                update3DSpectrogram(spectrum, m_fftSize, m_fftMin, m_nbBins);
             }
             else
             {
@@ -1035,6 +1068,33 @@ void GLSpectrumView::redrawWaterfallAnd3DSpectrogram()
             idx++;
         }
     }
+}
+
+// A buffered line taken at another centre frequency or sample rate than the one displayed, moved so
+// that each bin is drawn at its real frequency (as SDR++: after a retune the old waterfall shifts
+// with the scale instead of being drawn at the wrong place). Parts out of the line are left dark.
+const Real *GLSpectrumView::alignedSpectrum(const Spectrum& spectrum)
+{
+    qint64 centerFrequency = getDisplayedCenterFrequency();
+    quint32 sampleRate = getDisplayedSampleRate();
+
+    if (((spectrum.m_centerFrequency == centerFrequency) && (spectrum.m_sampleRate == sampleRate))
+        || (spectrum.m_sampleRate == 0) || (sampleRate == 0) || (m_fftSize <= 0)) {
+        return spectrum.m_spectrum;
+    }
+
+    m_alignedSpectrum.resize(m_fftSize);
+    double displayedBin = (double) sampleRate / m_fftSize;
+    double lineBin = (double) spectrum.m_sampleRate / m_fftSize;
+
+    for (int i = 0; i < m_fftSize; i++)
+    {
+        double frequency = centerFrequency + (i - m_fftSize / 2) * displayedBin;
+        int k = (int) std::floor((frequency - spectrum.m_centerFrequency) / lineBin + m_fftSize / 2 + 0.5);
+        m_alignedSpectrum[i] = (k >= 0) && (k < m_fftSize) ? spectrum.m_spectrum[k] : -1000.0f;
+    }
+
+    return m_alignedSpectrum.data();
 }
 
 void GLSpectrumView::measure(const Real *spectrum, bool updateGUI)
@@ -1109,6 +1169,15 @@ void GLSpectrumView::newSpectrum(const Real *spectrum, int fftSize, quint32 samp
 
     if (m_scrollBarEnabled)
     {
+        // Retune or new sample rate: redraw the waterfall from the buffer, the old lines moved to
+        // their frequencies (see alignedSpectrum), and update the scale
+        if ((m_spectrumBuffer.size() > 0)
+            && ((m_spectrumBuffer[m_spectrumBuffer.size() - 1].m_centerFrequency != centerFrequency) || (m_spectrumBuffer[m_spectrumBuffer.size() - 1].m_sampleRate != sampleRate)))
+        {
+            m_redrawAll = true;
+            m_changesPending = true;
+        }
+
         updateSpectrumBuffer(&spectrum[0], m_fftSize, sampleRate, centerFrequency, dateTime);
         offset = scrollBarValue();
         idx = m_spectrumBuffer.size() - 1 - offset;
@@ -1245,7 +1314,7 @@ bool GLSpectrumView::getSpectrumHistory(const QDateTime& since, int maxRows, con
 
 void GLSpectrumView::clearWaterfallRow(int nbBins)
 {
-    if (m_waterfallBufferPos < m_waterfallBuffer->height())
+    if ((m_waterfallBufferPos < m_waterfallBuffer->height()) && (nbBins + 1 <= m_waterfallBuffer->width()))
     {
         quint32* pix = (quint32*)m_waterfallBuffer->scanLine(m_waterfallBufferPos);
 
@@ -1258,7 +1327,7 @@ void GLSpectrumView::clearWaterfallRow(int nbBins)
 
 void GLSpectrumView::updateWaterfall(const Real *spectrum, int fftSize, int fftMin, int nbBins)
 {
-    if (m_waterfallBufferPos < m_waterfallBuffer->height())
+    if ((m_waterfallBufferPos < m_waterfallBuffer->height()) && (nbBins + 1 <= m_waterfallBuffer->width()))
     {
         quint32* pix = (quint32*)m_waterfallBuffer->scanLine(m_waterfallBufferPos);
 
@@ -1280,7 +1349,7 @@ void GLSpectrumView::updateWaterfall(const Real *spectrum, int fftSize, int fftM
 
 void GLSpectrumView::clear3DSpectrogramRow(int nbBins)
 {
-    if (m_3DSpectrogramBufferPos < m_3DSpectrogramBuffer->height())
+    if ((m_3DSpectrogramBufferPos < m_3DSpectrogramBuffer->height()) && (nbBins + 1 <= m_3DSpectrogramBuffer->width()))
     {
         quint8* pix = (quint8*)m_3DSpectrogramBuffer->scanLine(m_3DSpectrogramBufferPos);
 
@@ -1293,7 +1362,7 @@ void GLSpectrumView::clear3DSpectrogramRow(int nbBins)
 
 void GLSpectrumView::update3DSpectrogram(const Real *spectrum, int fftSize, int fftMin, int nbBins)
 {
-    if (m_3DSpectrogramBufferPos < m_3DSpectrogramBuffer->height())
+    if ((m_3DSpectrogramBufferPos < m_3DSpectrogramBuffer->height()) && (nbBins + 1 <= m_3DSpectrogramBuffer->width()))
     {
         quint8* pix = (quint8*)m_3DSpectrogramBuffer->scanLine(m_3DSpectrogramBufferPos);
 
@@ -2128,12 +2197,15 @@ void GLSpectrumView::paintGL()
     }
 
     // paint waterfall grid
+    bool compactGrid = m_compactLayout && m_invertedWaterfall && !m_display3DSpectrogram;
+
     if (m_displayWaterfall && m_displayGrid)
     {
         const ScaleEngine::TickList* tickList;
         const ScaleEngine::Tick* tick;
         tickList = &m_timeScale.getTickList();
 
+        if (!compactGrid) // compact: no time lines, the waterfall has no time scale
         {
             GLfloat *q3 = m_q3TickTime.m_array;
             int effectiveTicks = 0;
@@ -2317,6 +2389,52 @@ void GLSpectrumView::paintGL()
         const ScaleEngine::TickList* tickList;
         const ScaleEngine::Tick* tick;
         tickList = &m_powerScale.getTickList();
+
+        // Compact layout: a finer grid, the minor ticks too, dimmer
+        if (compactGrid)
+        {
+            GLfloat *q3 = m_q3TickPower.m_array;
+            int effectiveTicks = 0;
+
+            for (int i = 0; i < tickList->count(); i++)
+            {
+                tick = &(*tickList)[i];
+
+                if (!tick->major)
+                {
+                    float y = tick->pos / m_powerScale.getSize();
+                    q3[4*effectiveTicks] = 0;
+                    q3[4*effectiveTicks+1] = 1-y;
+                    q3[4*effectiveTicks+2] = 1;
+                    q3[4*effectiveTicks+3] = 1-y;
+                    effectiveTicks++;
+                }
+            }
+
+            QVector4D color(1.0f, 1.0f, 1.0f, 0.5f * (float) m_displayGridIntensity / 100.0f);
+            m_glShaderSimple.drawSegments(m_glHistogramBoxMatrix, color, q3, 2*effectiveTicks);
+
+            const ScaleEngine::TickList* frequencyTicks = &m_frequencyScale.getTickList();
+            q3 = m_q3TickFrequency.m_array;
+            effectiveTicks = 0;
+
+            for (int i = 0; i < frequencyTicks->count(); i++)
+            {
+                tick = &(*frequencyTicks)[i];
+
+                if (!tick->major)
+                {
+                    float x = tick->pos / m_frequencyScale.getSize();
+                    q3[4*effectiveTicks] = x;
+                    q3[4*effectiveTicks+1] = 0;
+                    q3[4*effectiveTicks+2] = x;
+                    q3[4*effectiveTicks+3] = 1;
+                    effectiveTicks++;
+                }
+            }
+
+            m_glShaderSimple.drawSegments(m_glHistogramBoxMatrix, color, q3, 2*effectiveTicks);
+        }
 
         {
             GLfloat *q3 = m_q3TickPower.m_array;
@@ -3421,7 +3539,9 @@ void GLSpectrumView::paintLeftScales()
         painter.setFont(font());
         const ScaleEngine::TickList* tickList;
         const ScaleEngine::Tick* tick;
-        if (m_displayWaterfall) {
+        bool compact = m_compactLayout && m_invertedWaterfall && !m_display3DSpectrogram;
+
+        if (m_displayWaterfall && !compact) {
             tickList = &m_timeScale.getTickList();
             for (int i = 0; i < tickList->count(); i++) {
                 tick = &(*tickList)[i];
@@ -3472,6 +3592,7 @@ void GLSpectrumView::applyChanges()
     m_histogramTop = 0;
     //int m_leftMargin;
     m_rightMargin = fm.horizontalAdvance("000");
+    bool compact = m_compactLayout && m_invertedWaterfall && !m_display3DSpectrogram;
 
     // displays both histogram and waterfall
     if ((m_displayWaterfall || m_display3DSpectrogram) && (m_displayHistogram || m_displayMaxHold || m_displayCurrent))
@@ -3482,7 +3603,16 @@ void GLSpectrumView::applyChanges()
             m_waterfallHeight = 0;
         }
 
-        if (m_invertedWaterfall)
+        if (compact)
+        {
+            // Spectrum, then the waterfall right under it, then one line of frequencies
+            m_frequencyScaleHeight = (fm.height() * 3) / 2;
+            m_histogramTop = m_topMargin;
+            m_histogramHeight = height() - m_topMargin - m_waterfallHeight - m_frequencyScaleHeight;
+            m_waterfallTop = m_histogramTop + m_histogramHeight;
+            frequencyScaleTop = m_waterfallTop + m_waterfallHeight;
+        }
+        else if (m_invertedWaterfall)
         {
             m_histogramTop = m_topMargin;
             m_histogramHeight = height() - m_topMargin - m_waterfallHeight - m_frequencyScaleHeight - m_bottomMargin;
@@ -3503,6 +3633,10 @@ void GLSpectrumView::applyChanges()
         m_leftMargin = m_timeScale.getScaleWidth();
 
         setPowerScale(m_histogramHeight);
+
+        if (compact) {
+            m_leftMargin = m_powerScale.getScaleWidth(); // dB only, no time scale
+        }
 
         m_leftMargin += 2 * M;
 
@@ -3695,7 +3829,16 @@ void GLSpectrumView::applyChanges()
         m_frequencyScaleHeight
     );
 
-    if ((m_invertedWaterfall) || (m_waterfallHeight == 0))
+    if (compact)
+    {
+        m_histogramRect = QRectF(
+            (float) m_leftMargin / (float) width(),
+            (float) m_histogramTop / (float) height(),
+            (float) (width() - m_leftMargin - m_rightMargin) / (float) width(),
+            (float) m_histogramHeight / (float) height()
+        );
+    }
+    else if ((m_invertedWaterfall) || (m_waterfallHeight == 0))
     {
         m_histogramRect = QRectF(
             (float) m_leftMargin / (float) width(),
@@ -3714,7 +3857,16 @@ void GLSpectrumView::applyChanges()
         );
     }
 
-    if (!m_invertedWaterfall || (m_histogramHeight == 0))
+    if (compact)
+    {
+        m_waterfallRect = QRectF(
+            (float) m_leftMargin / (float) width(),
+            (float) m_waterfallTop / (float) height(),
+            (float) (width() - m_leftMargin - m_rightMargin) / (float) width(),
+            (float) m_waterfallHeight / (float) height()
+        );
+    }
+    else if (!m_invertedWaterfall || (m_histogramHeight == 0))
     {
         m_waterfallRect = QRectF(
             (float) m_leftMargin / (float) width(),
@@ -3913,16 +4065,20 @@ void GLSpectrumView::applyChanges()
             const ScaleEngine::TickList* tickList = &m_frequencyScale.getTickList();
             const ScaleEngine::Tick* tick;
 
+            // Compact layout: one line of frequencies under the waterfall
+            bool compact = m_compactLayout && m_invertedWaterfall && !m_display3DSpectrogram;
+            float labelY = compact ? fm.ascent() + 3 : fm.height() + fm.ascent() / 2 - 1;
+
             for (int i = 0; i < tickList->count(); i++) {
                 tick = &(*tickList)[i];
                 if (tick->major) {
                     if (tick->textSize > 0)
-                        painter.drawText(QPointF(m_leftMargin + tick->textPos, fm.height() + fm.ascent() / 2 - 1), tick->text);
+                        painter.drawText(QPointF(m_leftMargin + tick->textPos, labelY), tick->text);
                 }
             }
 
             // Frequency overlay on highlighted marker
-            for (int i = 0; i < m_channelMarkerStates.size(); ++i)
+            for (int i = 0; !compact && (i < m_channelMarkerStates.size()); ++i)
             {
                 ChannelMarkerState* dv = m_channelMarkerStates[i];
 

@@ -88,8 +88,8 @@ void RBSCountryDelegate::paint(QPainter *painter, const QStyleOptionViewItem& op
     QRectF box = QRectF(row).adjusted(4.5, 2.5, -4.5, -1.5);
     bool hover = option.state & QStyle::State_MouseOver;
     bool expanded = m_view->isExpanded(index);
-    painter->setPen(QColor(expanded ? "#3d8bff" : "#2a3038"));
-    painter->setBrush(QColor(hover ? "#1f242c" : "#181c22"));
+    painter->setPen(QColor(expanded ? "#3d8bff" : "#35353b"));
+    painter->setBrush(QColor(hover ? "#2a2a2f" : "#212125"));
     painter->drawRoundedRect(box, 3, 3);
 
     QFont font = option.font;
@@ -101,7 +101,7 @@ void RBSCountryDelegate::paint(QPainter *painter, const QStyleOptionViewItem& op
 
     // Arrow, as the side menu sections
     painter->setFont(font);
-    painter->setPen(QColor("#9aa4b1"));
+    painter->setPen(QColor("#9696a0"));
     painter->drawText(QRect(x, content.top(), 14, content.height()), Qt::AlignCenter, expanded ? "▾" : "▸");
     x += 20;
 
@@ -116,7 +116,7 @@ void RBSCountryDelegate::paint(QPainter *painter, const QStyleOptionViewItem& op
     int pillWidth = std::max(22, QFontMetrics(font).horizontalAdvance(count) + 12);
     QRectF pill(x, content.center().y() - 9, pillWidth, 18);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor("#2a3340"));
+    painter->setBrush(QColor("#35353b"));
     painter->drawRoundedRect(pill, 9, 9);
     painter->setFont(font);
     painter->setPen(QColor("#cfd6de"));
@@ -133,7 +133,7 @@ void RBSCountryDelegate::paint(QPainter *painter, const QStyleOptionViewItem& op
         painter->drawText(QRect(x + 13, content.top(), 80, content.height()), Qt::AlignLeft | Qt::AlignVCenter, "nouveau");
     }
 
-    painter->setPen(QColor("#9aa4b1"));
+    painter->setPen(QColor("#9696a0"));
     painter->drawText(content, Qt::AlignRight | Qt::AlignVCenter, index.data(SummaryRole).toString());
     painter->restore();
 }

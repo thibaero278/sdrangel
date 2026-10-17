@@ -19,6 +19,9 @@
 #ifndef INCLUDE_FEATURE_RBSSPECTRUMTEE_H_
 #define INCLUDE_FEATURE_RBSSPECTRUMTEE_H_
 
+#include <vector>
+
+#include <QElapsedTimer>
 #include <QMutex>
 
 #include "dsp/glspectruminterface.h"
@@ -26,10 +29,10 @@
 class SpectrumVis;
 class GLSpectrum;
 
-// A SpectrumVis feeds a single display. This tee takes the place of the device set's own
-// GLSpectrum and passes every spectrum on to it and to the RBS display, so both stay live.
-//
-// newSpectrum is called from the DSP thread; attach and detach from the main thread.
+// Sits between a device set's SpectrumVis and its display (the SDRangel spectrum, hidden while
+// RBS is open), and also feeds the RBS spectrum. The RBS spectrum gets its own line rate (the
+// waterfall speed, as the FFT rate of SDR++) and smoothing (exponential average of the spectra):
+// the SDRangel display is left untouched.
 class RBSSpectrumTee : public GLSpectrumInterface
 {
 public:
@@ -42,6 +45,11 @@ public:
     void detach();
     bool isAttachedTo(const SpectrumVis *spectrumVis) const { return m_spectrumVis && (m_spectrumVis == spectrumVis); }
 
+    void setLinesPerSecond(int linesPerSecond);   //!< Spectra (waterfall lines) sent to the RBS spectrum per second
+    void setSmoothing(float smoothing);           //!< 0 (none) to 0.95: weight of the past in the average
+    //! Last spectrum sent to the RBS spectrum (dB per bin, lowest frequency first). False if none yet
+    bool getLastSpectrum(std::vector<float>& spectrum) const;
+
     void newSpectrum(const Real* spectrum, int fftSize) override;
     void setSpectrumVis(SpectrumVis *spectrumVis) override;
 
@@ -50,7 +58,15 @@ private:
     GLSpectrum *m_original;
     SpectrumVis *m_spectrumVis;
     bool m_attaching;
-    QMutex m_mutex;
+    mutable QMutex m_mutex;
+
+    int m_linesPerSecond;
+    float m_smoothing;
+    QElapsedTimer m_lineTimer;
+    std::vector<float> m_average;  //!< Smoothed spectrum (exponential average)
+    std::vector<double> m_sum;     //!< Sum of the spectra since the last line, without smoothing
+    int m_sumCount;
+    std::vector<float> m_line;     //!< Line sent last
 };
 
 #endif // INCLUDE_FEATURE_RBSSPECTRUMTEE_H_

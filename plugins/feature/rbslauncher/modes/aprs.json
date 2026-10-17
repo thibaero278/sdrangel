@@ -1,11 +1,13 @@
 {
     "id": "aprs",
-    "order": 2,
+    "order": 3,
     "name": "APRS",
-    "group": "VHF / UHF",
+    "group": "Amateur",
     "band": "2 m VHF",
     "view": "aprs",
     "demod": "FM",
+    "description": "Positions, messages et météo des radioamateurs, en paquets AX.25 à 1200 bauds, sur 144,800 MHz en Europe.",
+    "tip": "Une antenne verticale 2 m suffit. L'ISS relaie aussi l'APRS sur 145,825 MHz à ses passages.",
     "device": {
         "centerFrequency": 144700000,
         "devSampleRate": 2000000,
@@ -22,6 +24,10 @@
         "type": "PacketDemod",
         "inputFrequencyOffset": 100000,
         "settings": {}
+    },
+    "marker": {
+        "sideband": "dsb",
+        "high": 6250
     },
     "spectrum": {
         "fftSize": 4096,

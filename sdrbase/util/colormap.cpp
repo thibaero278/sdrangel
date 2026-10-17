@@ -24,6 +24,45 @@
 
 #include "colormap.h"
 
+// RBS: blue palette as SDR# and the MultiPSK Deck: navy for the noise, then blue, light blue, white
+// for the strongest signals. 256 RGB triplets, interpolated between a few colours
+static const float *rbsBlue()
+{
+    static float map[256 * 3];
+    static bool made = false;
+
+    if (!made)
+    {
+        struct Stop { float position, r, g, b; };
+        static const Stop stops[] = {
+            {0.00f, 0.00f, 0.00f, 0.10f},
+            {0.30f, 0.00f, 0.05f, 0.45f},
+            {0.55f, 0.08f, 0.25f, 0.95f},
+            {0.78f, 0.45f, 0.75f, 1.00f},
+            {1.00f, 1.00f, 1.00f, 1.00f}
+        };
+
+        for (int i = 0; i < 256; i++)
+        {
+            float x = i / 255.0f;
+            int s = 0;
+
+            while ((s < 3) && (x > stops[s + 1].position)) {
+                s++;
+            }
+
+            float t = (x - stops[s].position) / (stops[s + 1].position - stops[s].position);
+            map[3*i] = stops[s].r + t * (stops[s + 1].r - stops[s].r);
+            map[3*i + 1] = stops[s].g + t * (stops[s + 1].g - stops[s].g);
+            map[3*i + 2] = stops[s].b + t * (stops[s + 1].b - stops[s].b);
+        }
+
+        made = true;
+    }
+
+    return map;
+}
+
 QStringList ColorMap::getColorMapNames()
 {
     QStringList names = m_colorMaps.keys();
@@ -46,6 +85,7 @@ const float *ColorMap::getColorMap(const QString &name)
 
 QHash<QString, const float *> ColorMap::m_colorMaps{
     {"Angel", &m_angel[0]},
+    {"RBS Bleu", rbsBlue()},
     {"Jet", &m_jet[0]},
     {"Turbo", &m_turbo[0]},
     {"Parula", &m_parula[0]},

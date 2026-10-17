@@ -33,6 +33,10 @@ if(NOT SERVER_MODE)
         rbsfrequencydial.cpp
         rbsbandpopup.cpp
         rbsdelegates.cpp
+        rbsmeters.cpp
+        rbsmodepopup.cpp
+        rbscwdecoder.cpp
+        rbscwtap.cpp
         ${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver/mcpdatafeed.cpp
         rbslauncher.qrc
     )
@@ -49,6 +53,10 @@ if(NOT SERVER_MODE)
         rbsfrequencydial.h
         rbsbandpopup.h
         rbsdelegates.h
+        rbsmeters.h
+        rbsmodepopup.h
+        rbscwdecoder.h
+        rbscwtap.h
         ${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver/mcpdatafeed.h
     )
     include_directories(${CMAKE_SOURCE_DIR}/plugins/feature/mcpserver)

@@ -39,11 +39,11 @@ enum Roles {
 };
 
 static const char* const m_styleSheet = R"(
-RBSBandPopup { background: #14171c; border: 1px solid #3d8bff; }
-QLabel#rbsPopupTitle { color: #7f8a98; font-size: 11px; padding: 6px 10px; background: #111418; border-bottom: 1px solid #252a31; }
-QListWidget { background: #14171c; border: none; outline: 0; }
-QListWidget#rbsBands { border-right: 1px solid #252a31; }
-QWidget#rbsPopupBottom { background: #111418; border-top: 1px solid #252a31; }
+RBSBandPopup { background: #18181b; border: 1px solid #3d8bff; }
+QLabel#rbsPopupTitle { color: #9696a0; font-size: 11px; padding: 6px 10px; background: #18181b; border-bottom: 1px solid #35353b; }
+QListWidget { background: #18181b; border: none; outline: 0; }
+QListWidget#rbsBands { border-right: 1px solid #35353b; }
+QWidget#rbsPopupBottom { background: #18181b; border-top: 1px solid #35353b; }
 )";
 
 // Band: name on the left, number of frequencies on the right
@@ -57,11 +57,11 @@ public:
         painter->save();
         bool selected = option.state & QStyle::State_Selected;
         bool hover = option.state & QStyle::State_MouseOver;
-        painter->fillRect(option.rect, selected ? QColor("#3d8bff") : hover ? QColor("#1e232a") : QColor("#14171c"));
+        painter->fillRect(option.rect, selected ? QColor("#3d8bff") : hover ? QColor("#2a2a2f") : QColor("#18181b"));
         QRect r = option.rect.adjusted(12, 0, -12, 0);
-        painter->setPen(QColor(selected ? "#ffffff" : "#dfe4ea"));
+        painter->setPen(QColor(selected ? "#ffffff" : "#e3e3e6"));
         painter->drawText(r, Qt::AlignLeft | Qt::AlignVCenter, index.data(Qt::DisplayRole).toString());
-        painter->setPen(QColor(selected ? "#ffffff" : "#7f8a98"));
+        painter->setPen(QColor(selected ? "#ffffff" : "#9696a0"));
         painter->drawText(r, Qt::AlignRight | Qt::AlignVCenter, QString::number(index.data(CountRole).toInt()));
         painter->restore();
     }
@@ -84,8 +84,8 @@ public:
         painter->save();
         bool selected = option.state & QStyle::State_Selected;
         bool hover = option.state & QStyle::State_MouseOver;
-        painter->fillRect(option.rect, selected ? QColor("#262c35") : hover ? QColor("#1e232a") : QColor("#14171c"));
-        painter->setPen(QColor("#1c2026"));
+        painter->fillRect(option.rect, selected ? QColor("#2a2a2f") : hover ? QColor("#2a2a2f") : QColor("#18181b"));
+        painter->setPen(QColor("#26262b"));
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
 
         QRect r = option.rect.adjusted(14, 6, -10, -6);
@@ -111,10 +111,10 @@ public:
             x += QFontMetrics(small).horizontalAdvance("STANDARD") + 8;
         }
 
-        painter->setPen(QColor("#7f8a98"));
+        painter->setPen(QColor("#9696a0"));
         painter->drawText(x, top, m_demod);
 
-        painter->setPen(QColor("#7f8a98"));
+        painter->setPen(QColor("#9696a0"));
         painter->drawText(r, Qt::AlignLeft | Qt::AlignBottom, index.data(NoteRole).toString());
         painter->restore();
     }
