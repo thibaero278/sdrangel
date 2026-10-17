@@ -183,7 +183,7 @@ void RBSDecodeFilter::setRequirement(const QString& name, int column, const QStr
 
 void RBSDecodeFilter::removeRequirement(const QString& name)
 {
-    if (m_requirements.remove(name) > 0) {
+    if (m_requirements.remove(name)) {
         invalidateFilter();
     }
 }
